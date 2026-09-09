@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release tag (e.g. v1.0.0, leave empty to read from VERSION)'
+        description: 'Release tag (e.g. v1.0.0, leave empty to auto-calculate)'
         required: false
         default: ''
 
@@ -35,19 +35,25 @@ jobs:
           $refName = "${{ github.ref_name }}"
           $eventName = "${{ github.event_name }}"
 
+          git fetch --tags --force
+
           if ($inputTag -ne "") {
-              $tag = if ($inputTag.StartsWith("v")) { $inputTag } else { "v$inputTag" }
+              $rawVer = $inputTag.TrimStart('v')
+              $tag = "v$rawVer"
           } elseif ($eventName -eq "push" -and $refName.StartsWith("v")) {
               $tag = $refName
+              $rawVer = $tag.TrimStart('v')
           } else {
-              if (-not (Test-Path "VERSION")) {
-                  throw "VERSION file not found in repository root."
+              $latestTag = (git tag -l "v*" --sort=-v:refname | Select-Object -First 1)
+              if (-not $latestTag) {
+                  $latestTag = "v0.1.0"
               }
-              $rawVer = (Get-Content "VERSION").Trim().TrimStart('v')
+              $commitMsg = (git log -1 --pretty=%B)
+              $rawVer = (python .github/scripts/bump-version.py "$latestTag" "$commitMsg").Trim()
               $tag = "v$rawVer"
           }
 
-          Write-Host "Determined release tag: $tag (Event: $eventName, Ref: $refName)"
+          Write-Host "Determined release tag: $tag (Raw version: $rawVer, Event: $eventName, Ref: $refName)"
 
           # Check if tag already exists on remote
           $tagExists = git ls-remote --tags origin "refs/tags/$tag"
@@ -57,9 +63,10 @@ jobs:
           } else {
               "skip=false" >> $env:GITHUB_OUTPUT
               "tag_name=$tag" >> $env:GITHUB_OUTPUT
+              "raw_version=$rawVer" >> $env:GITHUB_OUTPUT
 
-              # If on main, create and push the new tag
-              if ($eventName -eq "push" -and $refName -eq "main") {
+              # If tag does not exist remotely, create and push it
+              if (-not $tagExists) {
                   Write-Host "Creating and pushing git tag $tag to origin..." -ForegroundColor Cyan
                   git config user.name "github-actions[bot]"
                   git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -78,7 +85,7 @@ jobs:
         if: steps.tag_step.outputs.skip != 'true'
         shell: pwsh
         run: |
-          .\build_all.ps1 -Platforms @("win-x64", "win-x86", "win-arm64") -Configuration Release
+          .\build_all.ps1 -Platforms @("win-x64", "win-x86", "win-arm64") -Configuration Release -Version "${{ steps.tag_step.outputs.raw_version }}"
 
       - name: Package Executables
         if: steps.tag_step.outputs.skip != 'true'

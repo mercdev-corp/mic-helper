@@ -239,10 +239,10 @@ The project features a fully automated CI/CD pipeline using GitHub Actions, mana
 
 ### Versioning Strategy
 
-Version management is centralized and follows [Semantic Versioning (SemVer)](https://semver.org/):
+Version management follows [Semantic Versioning (SemVer)](https://semver.org/) and is fully automated via Git tags:
 
-- **Single Source of Truth:** Application version is defined in the root [`VERSION`](VERSION) file (e.g. `0.1.0`).
-- **MSBuild Propagation:** [`Directory.Build.props`](Directory.Build.props) reads the `VERSION` file during build and applies it to `Version`, `AssemblyVersion`, `FileVersion`, and `InformationalVersion` across all projects (`MicHelper.Shared`, `MicHelper.Server`, `MicHelper.Client`, `MicHelper.Tests`).
+- **Git Tags as Single Source of Truth:** Release versions are defined by Git tags (e.g. `v0.2.0`). No static version files are committed to the repository, avoiding merge conflicts and race conditions when parallel branches are developed and merged.
+- **Dynamic MSBuild Injection:** [`Directory.Build.props`](Directory.Build.props) accepts `$(Version)` or `$(APP_VERSION)` passed from CI pipelines and [`build_all.ps1`](build_all.ps1) (falling back to `git describe --tags` or `0.1.0` during local development). It automatically applies versions to `Version`, `AssemblyVersion`, `FileVersion`, and `InformationalVersion` across all projects (`MicHelper.Shared`, `MicHelper.Server`, `MicHelper.Client`, `MicHelper.Tests`).
 - **UI Version Display:** The resolved version is exposed dynamically at runtime and displayed in the context menu header of both Server and Client tray applications.
 
 ### Automated Workflows
@@ -251,47 +251,46 @@ The development lifecycle is orchestrated by four interconnected GitHub Actions 
 
 ```mermaid
 flowchart TD
-    A["Push to Branch (feat/*, fix/*, chore/*)"] --> B["Auto Create PR"]
+    A["Push to Branch (feat/*, fix/*, chore/*)"] --> B["Auto Create PR & Request Review"]
     A --> C["CI Tests (Unit Tests on .NET 10)"]
     B --> D["PR Open targeting main"]
-    C -->|Pass| E{"Evaluation Gate (Approved + Green CI)"}
+    C -->|Pass| E{"Quality Gate (Approved + Green CI)"}
     D --> E
-    E -->|Approved & Green| F["Auto-Merge & Version Bump"]
-    F -->|Minor bump for feat/*, Patch bump for fix/*| G["Commit & Push VERSION"]
-    G --> H["Merge PR & Delete Branch"]
-    H --> I["Release Workflow on main"]
-    I -->|Create git tag vX.Y.Z| J["Build win-x64, win-x86, win-arm64"]
-    J --> K["Create ZIP Packages"]
-    K --> L["Publish GitHub Release with Assets"]
+    E -->|Approved & Green| F["Auto-Merge PR & Delete Branch"]
+    F --> G["Release Workflow on main"]
+    G -->|Calculate SemVer from Git Tags & Commit| H["Create Git Tag vX.Y.Z"]
+    H --> I["Build win-x64, win-x86, win-arm64 with -Version"]
+    I --> J["Create ZIP Packages"]
+    J --> K["Publish GitHub Release with Assets"]
 ```
 
 #### 1. Auto Create Pull Request (`auto-pr.yml`)
 - Triggered automatically whenever changes are pushed to feature or maintenance branches (`feat/**`, `fix/**`, `chore/**`, `refactor/**`, etc.).
-- Checks if an open PR targeting `main` already exists.
-- If none exists, creates a new Pull Request using the latest commit message as the PR title.
+- Checks if an open PR targeting `main` already exists; creates a new Pull Request if none exists.
+- Automatically assigns the repository owner / admin collaborator as a reviewer.
 
 #### 2. Continuous Integration (`ci.yml`)
 - Runs on all pull requests targeting `main` and pushes to development branches.
 - Restores dependencies and executes the unit test suite on a Windows runner using the .NET 10 SDK.
 
-#### 3. Auto-Merge & Semantic Version Bump (`auto-merge.yml`)
+#### 3. Quality Gate & Auto-Merge (`auto-merge.yml`)
 - Triggered by pull request review submissions, CI workflow completions, or manual workflow dispatch.
 - Evaluates candidate pull requests against strict quality gates:
   - Pull Request must target `main`.
-  - PR must have an **APPROVED** review status.
-  - All CI status checks must be completed and successful.
-- **Automated SemVer Calculation:**
-  - Compares branch version with `main`'s `VERSION`.
-  - Branches starting with `feat/` or `feature/` trigger a **Minor** version bump (e.g., `0.1.0` &rarr; `0.2.0`).
-  - Bug fixes and maintenance branches (`fix/`, `chore/`, etc.) trigger a **Patch** version bump (e.g., `0.1.0` &rarr; `0.1.1`).
-  - If a higher version is explicitly set in the branch `VERSION` file, it is preserved.
-- Automatically commits the bumped `VERSION` file with `[skip ci]`, pushes to the branch, performs a fast merge into `main`, and deletes the feature branch.
+  - PR must have an **APPROVED** review status from an authorized collaborator or repo owner.
+  - All CI status checks must be completed and successful (with automatic polling wait).
+- Merges the PR cleanly into `main` and deletes the feature branch.
 
 #### 4. Build & Release Pipeline (`release.yml`)
 - Triggered on direct pushes to `main` (following an automated PR merge), git tags matching `v*`, or manual dispatch.
-- Checks if the tag already exists on remote to avoid duplicate releases.
-- Creates and pushes an annotated Git tag (e.g., `v0.2.0`).
-- Compiles standalone self-contained binaries for all supported Windows platforms:
+- **Automated SemVer Calculation:**
+  - Queries the latest Git tag on `main` (e.g. `v0.1.0`).
+  - Analyzes the merge commit message:
+    - `BREAKING CHANGE` or `!:` triggers a **Major** bump (`0.1.0` &rarr; `1.0.0`).
+    - `feat/` branch or `feat:` commit triggers a **Minor** bump (`0.1.0` &rarr; `0.2.0`).
+    - `fix/`, `chore/`, `ci/`, or other maintenance commits trigger a **Patch** bump (`0.1.0` &rarr; `0.1.1`).
+- Creates and pushes the new annotated Git tag to origin (skipping if tag already exists).
+- Compiles standalone self-contained binaries for all supported Windows platforms with the calculated version:
   - `win-x64` (64-bit Intel/AMD)
   - `win-x86` (32-bit Intel/AMD)
   - `win-arm64` (64-bit ARM)

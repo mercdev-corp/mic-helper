@@ -3,7 +3,8 @@
 param(
     [string[]]$Platforms = @("win-x64"),
     [string]$Configuration = "Release",
-    [string]$OutputDir = "./bin"
+    [string]$OutputDir = "./bin",
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,6 +44,22 @@ if (-not $env:NUGET_PACKAGES) {
     $env:NUGET_PACKAGES = Join-Path $env:DOTNET_CLI_HOME ".nuget\packages"
 }
 
+if (-not $Version) {
+    if ($env:APP_VERSION) {
+        $Version = $env:APP_VERSION
+    } else {
+        try {
+            $tag = & git describe --tags --abbrev=0 2>$null
+            if ($tag) { $Version = $tag.Trim().TrimStart('v') }
+        } catch {}
+    }
+}
+if (-not $Version) {
+    $Version = "0.1.0"
+}
+$cleanAssemblyVer = ($Version -split '-')[0]
+Write-Host "Target Version: $Version (AssemblyVersion: $cleanAssemblyVer)" -ForegroundColor Cyan
+
 $absOutputDir = [System.IO.Path]::GetFullPath((Join-Path $scriptDir $OutputDir))
 if (-not (Test-Path $absOutputDir)) {
     New-Item -ItemType Directory -Path $absOutputDir -Force | Out-Null
@@ -73,14 +90,16 @@ foreach ($rid in $Platforms) {
 
     Write-Host "Publishing Server -> $platformOutDir" -ForegroundColor Yellow
     & $dotnet publish $serverProj -c $Configuration -r $rid --self-contained true `
-        -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishSingleFile=true -m:1 -o $platformOutDir
+        -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishSingleFile=true -m:1 -o $platformOutDir `
+        -p:Version=$Version -p:AssemblyVersion=$cleanAssemblyVer -p:FileVersion=$cleanAssemblyVer -p:InformationalVersion=$Version
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to publish Server for $rid"
     }
 
     Write-Host "Publishing Client -> $platformOutDir" -ForegroundColor Yellow
     & $dotnet publish $clientProj -c $Configuration -r $rid --self-contained true `
-        -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishSingleFile=true -m:1 -o $platformOutDir
+        -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishSingleFile=true -m:1 -o $platformOutDir `
+        -p:Version=$Version -p:AssemblyVersion=$cleanAssemblyVer -p:FileVersion=$cleanAssemblyVer -p:InformationalVersion=$Version
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to publish Client for $rid"
     }

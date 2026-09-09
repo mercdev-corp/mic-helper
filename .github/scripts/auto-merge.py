@@ -18,33 +18,6 @@ def run_cmd(cmd, check=True, capture=True):
     )
     return res.stdout.strip() if capture else ""
 
-def parse_semver(v_str):
-    if not v_str:
-        return (0, 0, 0)
-    v_str = v_str.strip().lstrip('v')
-    numbers = re.findall(r'\d+', v_str)
-    parts = [int(p) for p in numbers[:3]]
-    while len(parts) < 3:
-        parts.append(0)
-    return tuple(parts)
-
-def bump_version(main_v_str, branch_v_str, branch_name):
-    m_maj, m_min, m_pat = parse_semver(main_v_str)
-    b_maj, b_min, b_pat = parse_semver(branch_v_str)
-
-    # If branch version <= main version, bump it
-    if (b_maj, b_min, b_pat) <= (m_maj, m_min, m_pat):
-        branch_lower = branch_name.lower().strip()
-        if branch_lower.startswith(('feat/', 'feature/')):
-            # Minor bump, reset patch: 0.1.0 -> 0.2.0
-            return f"{m_maj}.{m_min + 1}.0"
-        else:
-            # Patch bump: 0.1.0 -> 0.1.1
-            return f"{m_maj}.{m_min}.{m_pat + 1}"
-    else:
-        # Branch version is already higher than main (e.g. manually set)
-        return f"{b_maj}.{b_min}.{b_pat}"
-
 def get_candidate_prs():
     # 1. PR from review event
     review_pr = os.environ.get("REVIEW_PR_NUMBER", "").strip()
