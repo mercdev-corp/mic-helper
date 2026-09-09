@@ -13,6 +13,8 @@ public sealed class OverlayForm : Form
     private readonly OverlayAssetManager _assetManager;
     private readonly System.Windows.Forms.Timer _pulseTimer;
     private readonly Stopwatch _stopwatch = new();
+    private readonly Win32Native.WinEventDelegate _winEventDelegate;
+    private IntPtr _hWinEventHook = IntPtr.Zero;
 
     private bool _isWysiwygMode;
     private MicState _actualLiveState = MicState.Disconnected;
@@ -26,6 +28,7 @@ public sealed class OverlayForm : Form
 
     public bool IsWysiwygMode => _isWysiwygMode;
     public bool IsPulseTimerRunning => _pulseTimer.Enabled;
+    internal IntPtr WinEventHookHandle => _hWinEventHook;
 
     protected override bool ShowWithoutActivation => true;
 
@@ -51,6 +54,7 @@ public sealed class OverlayForm : Form
     {
         _settings = settings;
         _assetManager = assetManager;
+        _winEventDelegate = OnForegroundWindowChanged;
 
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
@@ -137,12 +141,48 @@ public sealed class OverlayForm : Form
         _settings.PulseFrequency = Math.Clamp(frequencySeconds, 0.1, 5.0);
     }
 
+    public void ReassertTopmost()
+    {
+        if (IsDisposed || !IsHandleCreated)
+        {
+            return;
+        }
+
+        if (InvokeRequired)
+        {
+            try
+            {
+                BeginInvoke(ReassertTopmost);
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            return;
+        }
+
+        Win32Native.SetWindowPos(
+            Handle,
+            Win32Native.HWND_TOPMOST,
+            0, 0, 0, 0,
+            Win32Native.SWP_NOMOVE | Win32Native.SWP_NOSIZE | Win32Native.SWP_NOACTIVATE);
+    }
+
+    protected override void OnVisibleChanged(EventArgs e)
+    {
+        base.OnVisibleChanged(e);
+        if (Visible)
+        {
+            ReassertTopmost();
+        }
+    }
+
     private void StartPulsing()
     {
         if (!Visible)
         {
             Visible = true;
         }
+        ReassertTopmost();
         if (!_pulseTimer.Enabled)
         {
             _stopwatch.Restart();
@@ -205,6 +245,15 @@ public sealed class OverlayForm : Form
 
     private void OnPulseTimerTick(object? sender, EventArgs e)
     {
+        if (IsHandleCreated && Visible)
+        {
+            var prevWindow = Win32Native.GetWindow(Handle, Win32Native.GW_HWNDPREV);
+            if (prevWindow != IntPtr.Zero)
+            {
+                ReassertTopmost();
+            }
+        }
+
         RenderFrame();
     }
 
@@ -479,6 +528,59 @@ public sealed class OverlayForm : Form
         }
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        RegisterForegroundHook();
+    }
+
+    protected override void OnHandleDestroyed(EventArgs e)
+    {
+        UnregisterForegroundHook();
+        base.OnHandleDestroyed(e);
+    }
+
+    private void RegisterForegroundHook()
+    {
+        if (_hWinEventHook == IntPtr.Zero)
+        {
+            _hWinEventHook = Win32Native.SetWinEventHook(
+                Win32Native.EVENT_SYSTEM_FOREGROUND,
+                Win32Native.EVENT_SYSTEM_FOREGROUND,
+                IntPtr.Zero,
+                _winEventDelegate,
+                0,
+                0,
+                Win32Native.WINEVENT_OUTOFCONTEXT | Win32Native.WINEVENT_SKIPOWNPROCESS);
+        }
+    }
+
+    private void UnregisterForegroundHook()
+    {
+        if (_hWinEventHook != IntPtr.Zero)
+        {
+            Win32Native.UnhookWinEvent(_hWinEventHook);
+            _hWinEventHook = IntPtr.Zero;
+        }
+    }
+
+    private void OnForegroundWindowChanged(
+        IntPtr hWinEventHook,
+        uint eventType,
+        IntPtr hwnd,
+        int idObject,
+        int idChild,
+        uint dwEventThread,
+        uint dwmsEventTime)
+    {
+        if (IsDisposed || !IsHandleCreated || !Visible)
+        {
+            return;
+        }
+
+        ReassertTopmost();
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -486,6 +588,7 @@ public sealed class OverlayForm : Form
             _pulseTimer.Dispose();
             _stopwatch.Stop();
         }
+        UnregisterForegroundHook();
         base.Dispose(disposing);
     }
 }

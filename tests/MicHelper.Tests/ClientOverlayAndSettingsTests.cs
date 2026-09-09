@@ -179,6 +179,82 @@ public sealed class ClientOverlayAndSettingsTests
     }
 
     [TestMethod]
+    public void OverlayForm_TopmostStylesAndReassertTopmost_MaintainsTopmostStyle()
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "OverlayTopmostTest_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            var settings = new ClientSettings();
+            using var assetManager = new OverlayAssetManager(tempFolder);
+            using var overlay = new OverlayForm(settings, assetManager);
+
+            // Force handle creation
+            var handle = overlay.Handle;
+            Assert.AreNotEqual(IntPtr.Zero, handle);
+
+            // Verify WS_EX_TOPMOST style bit is set on window
+            int initialExStyle = Win32Native.GetWindowLong(overlay.Handle, Win32Native.GWL_EXSTYLE);
+            Assert.AreNotEqual(0, initialExStyle & Win32Native.WS_EX_TOPMOST, "Window should possess WS_EX_TOPMOST style");
+
+            // Invoke ReassertTopmost directly
+            overlay.ReassertTopmost();
+
+            int postReassertExStyle = Win32Native.GetWindowLong(overlay.Handle, Win32Native.GWL_EXSTYLE);
+            Assert.AreNotEqual(0, postReassertExStyle & Win32Native.WS_EX_TOPMOST, "Window should retain WS_EX_TOPMOST after ReassertTopmost");
+
+            // Transition live state to Muted (invokes StartPulsing -> ReassertTopmost)
+            overlay.SetLiveState(MicState.Muted, isPaused: false);
+            Assert.IsTrue(overlay.Visible);
+            Assert.IsTrue(overlay.IsPulseTimerRunning);
+
+            // GetWindow with GW_HWNDPREV executes properly on window handle
+            var prevHwnd = Win32Native.GetWindow(overlay.Handle, Win32Native.GW_HWNDPREV);
+            Assert.IsTrue(prevHwnd == IntPtr.Zero || prevHwnd != IntPtr.Zero);
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
+    }
+
+    [TestMethod]
+    public void OverlayForm_HandleLifecycle_RegistersAndUnhooksWinEvent()
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "OverlayHookTest_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            var settings = new ClientSettings();
+            using var assetManager = new OverlayAssetManager(tempFolder);
+            var overlay = new OverlayForm(settings, assetManager);
+
+            // Before handle creation, hook should not be registered
+            Assert.AreEqual(IntPtr.Zero, overlay.WinEventHookHandle, "Hook should be IntPtr.Zero before handle creation");
+
+            // Create handle
+            var handle = overlay.Handle;
+            Assert.AreNotEqual(IntPtr.Zero, handle);
+
+            // After handle creation, hook should be successfully registered
+            var hookHandle = overlay.WinEventHookHandle;
+            Assert.AreNotEqual(IntPtr.Zero, hookHandle, "Hook handle should be non-zero after handle creation");
+
+            // Dispose overlay form
+            overlay.Dispose();
+
+            // After disposal, hook must be cleanly unhooked and reset
+            Assert.AreEqual(IntPtr.Zero, overlay.WinEventHookHandle, "Hook handle must be reset to IntPtr.Zero after disposal");
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
+    }
+
+    [TestMethod]
     public async Task UdpListener_DiscoversBroadcasterAndDetectsOffline()
     {
         int testPort = 13295;

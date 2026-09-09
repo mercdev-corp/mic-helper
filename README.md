@@ -4,6 +4,10 @@ Network microphone status indicator.
 
 Minimalistic lightweight portable extremely low resource consumption system tray client-server application to indicate microphone mute status information from remote PC.
 
+<p align="center">
+  <img src="screenshot.jpg" alt="Mic Helper in-game overlay" width="100%">
+</p>
+
 ## Architecture
 
 .NET native application
