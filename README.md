@@ -1,4 +1,4 @@
-`# Mic Helper
+# Mic Helper
 
 Network microphone status indicator.
 
