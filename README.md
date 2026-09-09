@@ -4,6 +4,24 @@ Network microphone status indicator.
 
 Minimalistic lightweight portable extremely low resource consumption system tray client-server application to indicate microphone mute status information from remote PC.
 
+As a gameplay streamer I often forgot that my microphone was muted during stream due to some circumstances and I'm continuing to stream with muted microphone for some time (some times pretty long time). This application helps to avoid this situation by providing an overlay that indicates the microphone mute status over the game window. Application designed as client-server model so you can even see microphone mute status from multiple PCs (for example if it's connected to separate streaming PC).
+
+<p align="center">
+  <img src="screenshot.jpg" alt="Mic Helper in-game overlay" width="100%">
+</p>
+
+Download latest release from [Releases](https://github.com/mercdev-corp/mic-helper/releases) page for your platform. Unzip the archive.
+
+Run MicHelper.Server.exe on PC where mic is plugged in. Open settings and select desired microphone device (change other options if needed).
+
+<img src="server-settings.png" alt="server settings window">
+
+Run MicHelper.Client.exe on PC where you want to see the microphone mute status. Open settings and select your server from dropdown (change other options if needed). Drag and drop and resize the overlay as needed.
+
+<img src="client-settings.png" alt="client settings window">
+
+Seetings for each part will be saved in same folder wrom where application is executed.
+
 ## Architecture
 
 .NET native application
