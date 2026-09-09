@@ -56,8 +56,8 @@ jobs:
           if [ -n "$EXISTING_PR" ]; then
             echo "An open PR #$EXISTING_PR already exists for $BRANCH_NAME."
             if [ -n "$REVIEWER" ]; then
-              ALREADY_REVIEWED=$(gh pr view "$EXISTING_PR" --json reviews,reviewRequests --jq --arg u "$REVIEWER" '[.reviewRequests[].login, (.reviews[] | select(.state == "APPROVED") | .author.login)] | index($u)')
-              if [ "$ALREADY_REVIEWED" = "null" ] || [ -z "$ALREADY_REVIEWED" ]; then
+              ASSIGNED_OR_APPROVED=$(gh pr view "$EXISTING_PR" --json reviews,reviewRequests --jq '[.reviewRequests[].login, (.reviews[] | select(.state == "APPROVED") | .author.login)][]' | grep -xF "$REVIEWER" || true)
+              if [ -z "$ASSIGNED_OR_APPROVED" ]; then
                 echo "Requesting review from '$REVIEWER' for PR #$EXISTING_PR..."
                 gh pr edit "$EXISTING_PR" --add-reviewer "$REVIEWER" 2>/dev/null || true
               else
