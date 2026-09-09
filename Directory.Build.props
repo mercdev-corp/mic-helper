@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
-    <VersionFilePath>$(MSBuildThisFileDirectory)VERSION</VersionFilePath>
-    <AppRawVersion Condition="Exists('$(VersionFilePath)')">$([System.IO.File]::ReadAllText('$(VersionFilePath)').Trim())</AppRawVersion>
+    <AppRawVersion Condition="'$(Version)' != ''">$(Version)</AppRawVersion>
+    <AppRawVersion Condition="'$(AppRawVersion)' == '' and '$(APP_VERSION)' != ''">$(APP_VERSION)</AppRawVersion>
     <AppRawVersion Condition="'$(AppRawVersion)' == ''">0.1.0</AppRawVersion>
     
     <Version>$(AppRawVersion)</Version>

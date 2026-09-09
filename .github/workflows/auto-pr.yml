@@ -36,23 +36,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH_NAME: ${{ github.ref_name }}
         run: |
-          # 1. Version check and bump on branch creation / update
-          git fetch origin main
-          MAIN_VER=$(git show origin/main:VERSION 2>/dev/null || echo "0.0.0")
-          BRANCH_VER=$(cat VERSION 2>/dev/null || echo "0.1.0")
-          NEW_VER=$(python3 .github/scripts/bump-version.py "$MAIN_VER" "$BRANCH_VER" "$BRANCH_NAME")
-
-          if [ "$NEW_VER" != "$BRANCH_VER" ]; then
-            echo "Bumping VERSION on branch from $BRANCH_VER to $NEW_VER..."
-            echo "$NEW_VER" > VERSION
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add VERSION
-            git commit -m "chore(release): bump version to $NEW_VER"
-            git push origin "$BRANCH_NAME"
-          fi
-
-          # 2. Determine reviewer (repo owner / admin user)
+          # Determine reviewer (repo owner / admin user)
           REPO_OWNER="${{ github.repository_owner }}"
           REVIEWER=""
           OWNER_TYPE=$(gh api "repos/${{ github.repository }}" --jq '.owner.type' 2>/dev/null || echo "")
