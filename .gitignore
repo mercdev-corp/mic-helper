@@ -55,3 +55,16 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# Local environment & settings
+.dotnet_home/
+mic-helper-*-settings.json
+bin/
+cache/
+*.log
+*.user
+*.userprefs
+
+# Python
+__pycache__/
+*.py[co]
