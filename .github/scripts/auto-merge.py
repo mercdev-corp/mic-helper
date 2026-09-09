@@ -222,6 +222,13 @@ def main():
             print(f"Failed to process PR #{pr}: {err}")
 
     print(f"\nCompleted. Merged {merged_count} PR(s).")
+    if merged_count > 0:
+        print("PR(s) merged successfully into main. Triggering release workflow on main...")
+        try:
+            run_cmd(["gh", "workflow", "run", "release.yml", "--ref", "main"])
+            print("Successfully triggered release workflow on main!")
+        except Exception as err:
+            print(f"Failed to trigger release workflow: {err}")
 
 if __name__ == "__main__":
     main()
