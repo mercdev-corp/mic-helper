@@ -12,6 +12,13 @@ on:
       - 'fix/**'
       - 'hotfix/**'
       - 'chore/**'
+      - 'refactor/**'
+      - 'test/**'
+      - 'docs/**'
+      - 'ci/**'
+      - 'build/**'
+      - 'perf/**'
+      - 'bugfix/**'
 
 permissions:
   contents: read
