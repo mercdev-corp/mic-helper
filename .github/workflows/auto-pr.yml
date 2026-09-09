@@ -33,11 +33,37 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH_NAME: ${{ github.ref_name }}
         run: |
+          # Determine reviewer (repo owner / admin user)
+          REPO_OWNER="${{ github.repository_owner }}"
+          REVIEWER=""
+          OWNER_TYPE=$(gh api "repos/${{ github.repository }}" --jq '.owner.type' 2>/dev/null || echo "")
+          if [ "$OWNER_TYPE" = "User" ]; then
+            REVIEWER="$REPO_OWNER"
+          else
+            ADMIN_USER=$(gh api "repos/${{ github.repository }}/collaborators" --jq '[.[] | select(.permissions.admin == true) | .login] | first' 2>/dev/null || echo "")
+            if [ -n "$ADMIN_USER" ]; then
+              REVIEWER="$ADMIN_USER"
+            elif [ "${{ github.actor }}" != "github-actions[bot]" ] && [ "${{ github.actor }}" != "github-actions" ]; then
+              REVIEWER="${{ github.actor }}"
+            else
+              REVIEWER="qnub"
+            fi
+          fi
+
           echo "Checking if an open PR exists for branch '$BRANCH_NAME' targeting 'main'..."
           EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --base main --state open --json number --jq '.[0].number')
           
           if [ -n "$EXISTING_PR" ]; then
-            echo "An open PR #$EXISTING_PR already exists for $BRANCH_NAME. No action needed."
+            echo "An open PR #$EXISTING_PR already exists for $BRANCH_NAME."
+            if [ -n "$REVIEWER" ]; then
+              ALREADY_REVIEWED=$(gh pr view "$EXISTING_PR" --json reviews,reviewRequests --jq --arg u "$REVIEWER" '[.reviewRequests[].login, (.reviews[] | select(.state == "APPROVED") | .author.login)] | index($u)')
+              if [ "$ALREADY_REVIEWED" = "null" ] || [ -z "$ALREADY_REVIEWED" ]; then
+                echo "Requesting review from '$REVIEWER' for PR #$EXISTING_PR..."
+                gh pr edit "$EXISTING_PR" --add-reviewer "$REVIEWER" 2>/dev/null || true
+              else
+                echo "Reviewer '$REVIEWER' is already assigned or has approved PR #$EXISTING_PR."
+              fi
+            fi
             exit 0
           fi
 
@@ -46,6 +72,18 @@ jobs:
           TITLE="${COMMIT_MSG:-$BRANCH_NAME}"
 
           echo "Creating new PR: '$TITLE' ($BRANCH_NAME -> main)..."
+          EXTRA_ARGS=()
+          if [ -n "$REVIEWER" ]; then
+            echo "Requesting review from '$REVIEWER'..."
+            EXTRA_ARGS+=(--reviewer "$REVIEWER")
+          fi
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH_NAME" \
+            --title "$TITLE" \
+            --body "Automated Pull Request created on push to branch \`$BRANCH_NAME\`." \
+            "${EXTRA_ARGS[@]}" || \
           gh pr create \
             --base main \
             --head "$BRANCH_NAME" \

@@ -68,11 +68,56 @@ def get_candidate_prs():
     out = run_cmd(["gh", "pr", "list", "--base", "main", "--state", "open", "--json", "number", "--jq", ".[].number"])
     return [line.strip() for line in out.splitlines() if line.strip()]
 
+def check_approval(pr_data):
+    review_decision = pr_data.get("reviewDecision")
+    if review_decision == "APPROVED":
+        return True, "reviewDecision is APPROVED"
+    if review_decision == "CHANGES_REQUESTED":
+        return False, "reviewDecision is CHANGES_REQUESTED"
+
+    # In repositories without branch protection, reviewDecision is empty.
+    # Fallback to inspecting reviews and latestReviews.
+    latest_reviews = pr_data.get("latestReviews") or []
+    if not latest_reviews:
+        # Reconstruct latest review per user from full reviews list
+        reviews = pr_data.get("reviews") or []
+        user_reviews = {}
+        for r in reviews:
+            user = (r.get("author") or {}).get("login")
+            if user:
+                user_reviews[user] = r
+        latest_reviews = list(user_reviews.values())
+
+    authorized_roles = {"OWNER", "MEMBER", "COLLABORATOR"}
+    approved_by = []
+    changes_requested_by = []
+
+    for r in latest_reviews:
+        state = r.get("state")
+        author_info = r.get("author") or {}
+        author = author_info.get("login", "unknown")
+        assoc = r.get("authorAssociation", "")
+
+        # Only consider reviews from repo members/owners/collaborators
+        if assoc in authorized_roles:
+            if state == "CHANGES_REQUESTED":
+                changes_requested_by.append(author)
+            elif state == "APPROVED":
+                approved_by.append(author)
+
+    if changes_requested_by:
+        return False, f"Changes requested by: {', '.join(changes_requested_by)}"
+
+    if approved_by:
+        return True, f"Approved by authorized reviewer(s): {', '.join(approved_by)}"
+
+    return False, f"No approved reviews from authorized reviewers (reviewDecision='{review_decision}')"
+
 def evaluate_and_merge_pr(pr_number):
     print(f"\n================ Evaluating PR #{pr_number} ================")
     out = run_cmd([
         "gh", "pr", "view", str(pr_number),
-        "--json", "number,state,baseRefName,headRefName,reviewDecision,statusCheckRollup"
+        "--json", "number,state,baseRefName,headRefName,reviewDecision,reviews,latestReviews,statusCheckRollup"
     ])
     pr_data = json.loads(out)
 
@@ -92,9 +137,12 @@ def evaluate_and_merge_pr(pr_number):
         print(f"PR #{pr_number} does not target main (targets: {base_ref}). Skipping.")
         return False
 
-    if review_decision != "APPROVED":
-        print(f"PR #{pr_number} is not approved (reviewDecision: '{review_decision}'). Skipping.")
+    is_approved, reason = check_approval(pr_data)
+    if not is_approved:
+        print(f"PR #{pr_number} is not approved: {reason}. Skipping.")
         return False
+
+    print(f"PR #{pr_number} approval check passed: {reason}")
 
     # Filter out auto-merge checks so we don't wait on our own job
     relevant_checks = [
@@ -126,8 +174,8 @@ def evaluate_and_merge_pr(pr_number):
 
     # Fetch and checkout branch
     run_cmd(["git", "fetch", "origin", "main"])
-    run_cmd(["git", "fetch", "origin", f"{head_ref}:{head_ref}"])
-    run_cmd(["git", "checkout", head_ref])
+    run_cmd(["git", "fetch", "origin", head_ref])
+    run_cmd(["git", "checkout", "-B", head_ref, f"origin/{head_ref}"])
 
     # Get version in main
     try:

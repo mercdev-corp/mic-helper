@@ -65,3 +65,6 @@ cache/
 *.user
 *.userprefs
 
+# Python
+__pycache__/
+*.py[co]
