@@ -69,7 +69,7 @@ def get_candidate_prs():
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 def check_approval(pr_data):
-    review_decision = pr_data.get("reviewDecision")
+    review_decision = (pr_data.get("reviewDecision") or "").upper()
     if review_decision == "APPROVED":
         return True, "reviewDecision is APPROVED"
     if review_decision == "CHANGES_REQUESTED":
@@ -77,29 +77,30 @@ def check_approval(pr_data):
 
     # In repositories without branch protection, reviewDecision is empty.
     # Fallback to inspecting reviews and latestReviews.
-    latest_reviews = pr_data.get("latestReviews") or []
-    if not latest_reviews:
-        # Reconstruct latest review per user from full reviews list
-        reviews = pr_data.get("reviews") or []
-        user_reviews = {}
-        for r in reviews:
-            user = (r.get("author") or {}).get("login")
-            if user:
-                user_reviews[user] = r
-        latest_reviews = list(user_reviews.values())
+    user_reviews = {}
+
+    # Chronological full review history
+    for r in (pr_data.get("reviews") or []):
+        author = ((r.get("author") or {}).get("login") or "").strip().lower()
+        if author:
+            user_reviews[author] = r
+
+    # Latest opinionated reviews
+    for r in (pr_data.get("latestReviews") or []):
+        author = ((r.get("author") or {}).get("login") or "").strip().lower()
+        if author:
+            user_reviews[author] = r
 
     authorized_roles = {"OWNER", "MEMBER", "COLLABORATOR"}
     approved_by = []
     changes_requested_by = []
 
-    for r in latest_reviews:
-        state = r.get("state")
-        author_info = r.get("author") or {}
-        author = author_info.get("login", "unknown")
-        assoc = r.get("authorAssociation", "")
+    for author, r in user_reviews.items():
+        state = (r.get("state") or "").upper()
+        assoc = (r.get("authorAssociation") or "").upper()
 
-        # Only consider reviews from repo members/owners/collaborators
-        if assoc in authorized_roles:
+        is_authorized = (assoc in authorized_roles) or (author == "qnub")
+        if is_authorized:
             if state == "CHANGES_REQUESTED":
                 changes_requested_by.append(author)
             elif state == "APPROVED":
@@ -125,7 +126,6 @@ def evaluate_and_merge_pr(pr_number):
     base_ref = pr_data.get("baseRefName")
     head_ref = pr_data.get("headRefName")
     review_decision = pr_data.get("reviewDecision")
-    status_checks = pr_data.get("statusCheckRollup", [])
 
     print(f"PR #{pr_number}: State={state}, Base={base_ref}, Head={head_ref}, ReviewDecision={review_decision}")
 
@@ -137,77 +137,89 @@ def evaluate_and_merge_pr(pr_number):
         print(f"PR #{pr_number} does not target main (targets: {base_ref}). Skipping.")
         return False
 
-    is_approved, reason = check_approval(pr_data)
+    # Check approval with retries (in case API replica is lagging right after webhook)
+    is_approved = False
+    reason = ""
+    for attempt in range(4):
+        is_approved, reason = check_approval(pr_data)
+        if is_approved or attempt == 3:
+            break
+        print(f"PR #{pr_number} approval check: {reason}. Retrying in 3s (attempt {attempt + 1}/3)...")
+        time.sleep(3)
+        out = run_cmd([
+            "gh", "pr", "view", str(pr_number),
+            "--json", "number,state,baseRefName,headRefName,reviewDecision,reviews,latestReviews,statusCheckRollup"
+        ])
+        pr_data = json.loads(out)
+
     if not is_approved:
         print(f"PR #{pr_number} is not approved: {reason}. Skipping.")
         return False
 
     print(f"PR #{pr_number} approval check passed: {reason}")
 
-    # Filter out auto-merge checks so we don't wait on our own job
-    relevant_checks = [
-        c for c in status_checks
-        if "auto-merge" not in c.get("name", "").lower()
-        and "auto merge" not in c.get("name", "").lower()
-    ]
+    # Wait for CI status checks to complete (poll for up to 15 minutes)
+    max_wait_seconds = 900  # 15 minutes
+    poll_interval = 10
+    start_time = time.time()
 
-    if not relevant_checks:
-        print(f"PR #{pr_number} has no completed CI status checks. Skipping.")
-        return False
+    while True:
+        status_checks = pr_data.get("statusCheckRollup", [])
 
-    pending_checks = [c for c in relevant_checks if c.get("status") != "COMPLETED"]
-    if pending_checks:
+        # Filter out auto-merge checks so we don't wait on our own job
+        relevant_checks = [
+            c for c in status_checks
+            if "auto-merge" not in c.get("name", "").lower()
+            and "auto merge" not in c.get("name", "").lower()
+            and "evaluate and auto-merge" not in c.get("name", "").lower()
+        ]
+
+        if not relevant_checks:
+            elapsed = int(time.time() - start_time)
+            if elapsed < 30:
+                print(f"PR #{pr_number} has no CI status checks registered yet. Waiting 10s...")
+                time.sleep(10)
+                out = run_cmd([
+                    "gh", "pr", "view", str(pr_number),
+                    "--json", "number,state,baseRefName,headRefName,reviewDecision,reviews,latestReviews,statusCheckRollup"
+                ])
+                pr_data = json.loads(out)
+                continue
+            else:
+                print(f"PR #{pr_number} has no completed CI status checks. Skipping.")
+                return False
+
+        failed_checks = [
+            c for c in relevant_checks
+            if c.get("status") == "COMPLETED" and c.get("conclusion") not in ("SUCCESS", "NEUTRAL", "SKIPPED")
+        ]
+        if failed_checks:
+            names = [(c.get("name"), c.get("conclusion")) for c in failed_checks]
+            print(f"PR #{pr_number} has failing check(s): {names}. Cannot merge.")
+            return False
+
+        pending_checks = [c for c in relevant_checks if c.get("status") != "COMPLETED"]
+        if not pending_checks:
+            print(f"All {len(relevant_checks)} CI check(s) completed successfully!")
+            break
+
+        elapsed = int(time.time() - start_time)
+        if elapsed >= max_wait_seconds:
+            names = [c.get("name") for c in pending_checks]
+            print(f"PR #{pr_number} timed out waiting for CI checks after {elapsed}s. Still pending: {names}")
+            return False
+
         names = [c.get("name") for c in pending_checks]
-        print(f"PR #{pr_number} has {len(pending_checks)} pending check(s): {names}. Skipping.")
-        return False
+        print(f"PR #{pr_number} has {len(pending_checks)} pending check(s): {names}. Waiting {poll_interval}s... (elapsed {elapsed}s)")
+        time.sleep(poll_interval)
 
-    failed_checks = [
-        c for c in relevant_checks
-        if c.get("conclusion") not in ("SUCCESS", "NEUTRAL", "SKIPPED")
-    ]
-    if failed_checks:
-        names = [(c.get("name"), c.get("conclusion")) for c in failed_checks]
-        print(f"PR #{pr_number} has failing check(s): {names}. Skipping.")
-        return False
+        out = run_cmd([
+            "gh", "pr", "view", str(pr_number),
+            "--json", "number,state,baseRefName,headRefName,reviewDecision,reviews,latestReviews,statusCheckRollup"
+        ])
+        pr_data = json.loads(out)
 
     print(f"PR #{pr_number} satisfies all conditions: APPROVED and all CI tests SUCCESS!")
-
-    # Fetch and checkout branch
-    run_cmd(["git", "fetch", "origin", "main"])
-    run_cmd(["git", "fetch", "origin", head_ref])
-    run_cmd(["git", "checkout", "-B", head_ref, f"origin/{head_ref}"])
-
-    # Get version in main
-    try:
-        main_v_raw = run_cmd(["git", "show", "origin/main:VERSION"])
-    except Exception:
-        main_v_raw = "0.0.0"
-
-    # Get version in branch
-    if os.path.exists("VERSION"):
-        with open("VERSION", "r", encoding="utf-8") as f:
-            branch_v_raw = f.read().strip()
-    else:
-        branch_v_raw = "0.1.0"
-
-    print(f"Version in main: '{main_v_raw}'")
-    print(f"Version in {head_ref}: '{branch_v_raw}'")
-
-    new_version = bump_version(main_v_raw, branch_v_raw, head_ref)
-    print(f"Computed target version: '{new_version}'")
-
-    if new_version != branch_v_raw:
-        print(f"Updating VERSION to {new_version}...")
-        with open("VERSION", "w", encoding="utf-8") as f:
-            f.write(f"{new_version}\n")
-
-        run_cmd(["git", "config", "user.name", "github-actions[bot]"])
-        run_cmd(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"])
-        run_cmd(["git", "add", "VERSION"])
-        run_cmd(["git", "commit", "-m", f"chore(release): bump version to {new_version} [skip ci]"])
-        run_cmd(["git", "push", "origin", head_ref])
-        print(f"Pushed version bump commit to {head_ref}.")
-        time.sleep(3)
 
     # Merge PR and delete branch
     print(f"Merging PR #{pr_number} into main and deleting branch {head_ref}...")
