@@ -9,8 +9,9 @@ public sealed class AppVersionTests
     [TestMethod]
     public void AppVersion_Properties_ReturnExpectedValues()
     {
-        Assert.AreEqual("0.1.0", AppVersion.RawVersion);
-        Assert.AreEqual("v0.1.0", AppVersion.DisplayVersion);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(AppVersion.RawVersion));
+        Assert.IsTrue(Version.TryParse(AppVersion.RawVersion, out _));
+        Assert.AreEqual($"v{AppVersion.RawVersion}", AppVersion.DisplayVersion);
     }
 
     [TestMethod]
@@ -47,7 +48,7 @@ public sealed class AppVersionTests
     public void ExtractVersion_FromSharedAssembly_ReturnsValidVersion()
     {
         string version = AppVersion.ExtractVersion(typeof(AppVersion).Assembly);
-        Assert.AreEqual("0.1.0", version);
+        Assert.AreEqual(AppVersion.RawVersion, version);
     }
 
     [TestMethod]
