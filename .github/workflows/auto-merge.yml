@@ -1,0 +1,43 @@
+name: Auto Merge and Version Bump
+
+on:
+  pull_request_review:
+    types: [submitted]
+  workflow_run:
+    workflows: ["CI Tests"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Specific PR number to evaluate (optional)'
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+
+jobs:
+  auto-merge:
+    name: Evaluate and Auto-Merge PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run Auto-Merge Evaluator
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REVIEW_PR_NUMBER: ${{ github.event.pull_request.number }}
+          WORKFLOW_RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          INPUT_PR_NUMBER: ${{ github.event.inputs.pr_number }}
+        run: |
+          python3 .github/scripts/auto-merge.py

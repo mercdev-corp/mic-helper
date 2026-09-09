@@ -1,0 +1,118 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag (e.g. v1.0.0, leave empty to read from VERSION)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine Tag & Create Git Tag on main
+        id: tag_step
+        shell: pwsh
+        run: |
+          $inputTag = "${{ github.event.inputs.tag_name }}".Trim()
+          $refName = "${{ github.ref_name }}"
+          $eventName = "${{ github.event_name }}"
+
+          if ($inputTag -ne "") {
+              $tag = if ($inputTag.StartsWith("v")) { $inputTag } else { "v$inputTag" }
+          } elseif ($eventName -eq "push" -and $refName.StartsWith("v")) {
+              $tag = $refName
+          } else {
+              if (-not (Test-Path "VERSION")) {
+                  throw "VERSION file not found in repository root."
+              }
+              $rawVer = (Get-Content "VERSION").Trim().TrimStart('v')
+              $tag = "v$rawVer"
+          }
+
+          Write-Host "Determined release tag: $tag (Event: $eventName, Ref: $refName)"
+
+          # Check if tag already exists on remote
+          $tagExists = git ls-remote --tags origin "refs/tags/$tag"
+          if ($tagExists -and $eventName -eq "push" -and $refName -eq "main") {
+              Write-Host "Tag $tag already exists on remote origin. Skipping release creation." -ForegroundColor Yellow
+              "skip=true" >> $env:GITHUB_OUTPUT
+          } else {
+              "skip=false" >> $env:GITHUB_OUTPUT
+              "tag_name=$tag" >> $env:GITHUB_OUTPUT
+
+              # If on main, create and push the new tag
+              if ($eventName -eq "push" -and $refName -eq "main") {
+                  Write-Host "Creating and pushing git tag $tag to origin..." -ForegroundColor Cyan
+                  git config user.name "github-actions[bot]"
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
+                  git tag -a $tag -m "Release $tag"
+                  git push origin $tag
+              }
+          }
+
+      - name: Setup .NET 10 SDK
+        if: steps.tag_step.outputs.skip != 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build all architectures
+        if: steps.tag_step.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          .\build_all.ps1 -Platforms @("win-x64", "win-x86", "win-arm64") -Configuration Release
+
+      - name: Package Executables
+        if: steps.tag_step.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release_packages -Force | Out-Null
+          $platforms = @("win-x64", "win-x86", "win-arm64")
+
+          foreach ($rid in $platforms) {
+              $zipPath = "release_packages/mic-helper-$rid.zip"
+              $serverExe = "bin/$rid/MicHelper.Server.exe"
+              $clientExe = "bin/$rid/MicHelper.Client.exe"
+
+              if (-not (Test-Path $serverExe)) {
+                  throw "Missing Server executable: $serverExe"
+              }
+              if (-not (Test-Path $clientExe)) {
+                  throw "Missing Client executable: $clientExe"
+              }
+
+              Write-Host "Creating archive $zipPath with Server and Client executables..." -ForegroundColor Cyan
+              Compress-Archive -Path $serverExe, $clientExe -DestinationPath $zipPath -Force
+          }
+
+          Write-Host "Generated release archives:" -ForegroundColor Green
+          Get-ChildItem release_packages/*.zip | Select-Object Name, Length
+
+      - name: Publish GitHub Release
+        if: steps.tag_step.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_step.outputs.tag_name }}
+          name: ${{ steps.tag_step.outputs.tag_name }}
+          files: release_packages/*.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false

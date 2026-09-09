@@ -1,0 +1,53 @@
+name: Auto Create PR
+
+on:
+  push:
+    branches:
+      - 'feat/**'
+      - 'feature/**'
+      - 'fix/**'
+      - 'hotfix/**'
+      - 'chore/**'
+      - 'refactor/**'
+      - 'test/**'
+      - 'docs/**'
+      - 'ci/**'
+      - 'build/**'
+      - 'perf/**'
+      - 'bugfix/**'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  create-pr:
+    name: Auto Create Pull Request
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check and create Pull Request to main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH_NAME: ${{ github.ref_name }}
+        run: |
+          echo "Checking if an open PR exists for branch '$BRANCH_NAME' targeting 'main'..."
+          EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --base main --state open --json number --jq '.[0].number')
+          
+          if [ -n "$EXISTING_PR" ]; then
+            echo "An open PR #$EXISTING_PR already exists for $BRANCH_NAME. No action needed."
+            exit 0
+          fi
+
+          # Use commit subject or branch name as title
+          COMMIT_MSG=$(git log -1 --pretty=%s)
+          TITLE="${COMMIT_MSG:-$BRANCH_NAME}"
+
+          echo "Creating new PR: '$TITLE' ($BRANCH_NAME -> main)..."
+          gh pr create \
+            --base main \
+            --head "$BRANCH_NAME" \
+            --title "$TITLE" \
+            --body "Automated Pull Request created on push to branch \`$BRANCH_NAME\`."

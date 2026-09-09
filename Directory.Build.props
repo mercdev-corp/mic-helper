@@ -1,0 +1,16 @@
+<Project>
+  <PropertyGroup>
+    <VersionFilePath>$(MSBuildThisFileDirectory)VERSION</VersionFilePath>
+    <AppRawVersion Condition="Exists('$(VersionFilePath)')">$([System.IO.File]::ReadAllText('$(VersionFilePath)').Trim())</AppRawVersion>
+    <AppRawVersion Condition="'$(AppRawVersion)' == ''">0.1.0</AppRawVersion>
+    
+    <Version>$(AppRawVersion)</Version>
+    <AssemblyVersion>$(AppRawVersion)</AssemblyVersion>
+    <FileVersion>$(AppRawVersion)</FileVersion>
+    <InformationalVersion>$(AppRawVersion)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Authors>Vadim Lopatiuk</Authors>
+    <Copyright>Copyright (c) 2026 Vadim Lopatiuk</Copyright>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+  </PropertyGroup>
+</Project>
