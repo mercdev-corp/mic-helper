@@ -172,5 +172,97 @@ public sealed class ServerNetworkingAndSettingsTests
         Assert.IsGreaterThanOrEqualTo(form.VersionLabel.Location.X, 120);
         Assert.IsLessThanOrEqualTo(form.VersionLabel.Right, 280);
     }
+
+    [TestMethod]
+    public void MicrophoneSelectionController_Populate_WithActiveDevice_SelectsDevice()
+    {
+        var fakeMonitor = new FakeAudioMonitor
+        {
+            Devices = new List<AudioDeviceInfo>
+            {
+                new("dev-1", "Microphone 1", true),
+                new("dev-2", "Microphone 2", false)
+            }
+        };
+
+        using var cbo = new ComboBox();
+        MicComboItem? changedItem = null;
+        var controller = new MicrophoneSelectionController(cbo, fakeMonitor, item => changedItem = item);
+
+        controller.Populate("dev-2", "Microphone 2");
+
+        Assert.AreEqual(2, cbo.Items.Count);
+        Assert.IsNotNull(controller.SelectedItem);
+        Assert.AreEqual("dev-2", controller.SelectedId);
+        Assert.IsFalse(controller.SelectedItem.IsMissing);
+    }
+
+    [TestMethod]
+    public void MicrophoneSelectionController_Populate_WithMissingDevice_InsertsMissingItemFirst()
+    {
+        var fakeMonitor = new FakeAudioMonitor
+        {
+            Devices = new List<AudioDeviceInfo>
+            {
+                new("dev-1", "Microphone 1", true)
+            }
+        };
+
+        using var cbo = new ComboBox();
+        MicComboItem? changedItem = null;
+        var controller = new MicrophoneSelectionController(cbo, fakeMonitor, item => changedItem = item);
+
+        controller.Populate("dev-lost", "Lost Microphone");
+
+        Assert.AreEqual(2, cbo.Items.Count);
+        Assert.IsNotNull(controller.SelectedItem);
+        Assert.AreEqual("dev-lost", controller.SelectedId);
+        Assert.IsTrue(controller.SelectedItem.IsMissing);
+        Assert.AreEqual("Lost Microphone", controller.SelectedItem.DisplayName);
+    }
+
+    [TestMethod]
+    public void MicrophoneSelectionController_Populate_NoSavedDevice_SelectsFirstAndTriggersCallback()
+    {
+        var fakeMonitor = new FakeAudioMonitor
+        {
+            Devices = new List<AudioDeviceInfo>
+            {
+                new("dev-1", "Microphone 1", true),
+                new("dev-2", "Microphone 2", false)
+            }
+        };
+
+        using var cbo = new ComboBox();
+        MicComboItem? changedItem = null;
+        var controller = new MicrophoneSelectionController(cbo, fakeMonitor, item => changedItem = item);
+
+        controller.Populate(null, null);
+
+        Assert.AreEqual(2, cbo.Items.Count);
+        Assert.IsNotNull(controller.SelectedItem);
+        Assert.AreEqual("dev-1", controller.SelectedId);
+        Assert.IsNotNull(changedItem);
+        Assert.AreEqual("dev-1", changedItem.Id);
+    }
+
+    private sealed class FakeAudioMonitor : IAudioMonitor
+    {
+        public List<AudioDeviceInfo> Devices { get; set; } = new();
+        public IReadOnlyList<AudioDeviceInfo> GetActiveCaptureDevices() => Devices;
+        public AudioDeviceInfo? GetDefaultCaptureDevice() => Devices.FirstOrDefault(d => d.IsDefault);
+        public void StartMonitoring(string? targetDeviceId, int retryTimeoutSeconds = 5) { }
+        public void StopMonitoring() { }
+        public bool IsMuted => false;
+        public bool IsConnected => true;
+        public string? CurrentDeviceId => null;
+        public string? CurrentDeviceName => null;
+#pragma warning disable CS0067
+        public event Action<bool>? MuteChanged;
+        public event Action<bool>? ConnectionChanged;
+        public event Action? DevicesChanged;
+#pragma warning restore CS0067
+        public void Dispose() { }
+    }
 }
 

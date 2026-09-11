@@ -4,7 +4,15 @@ using MicHelper.Shared.Protocol;
 
 namespace MicHelper.Client.Config;
 
+[JsonConverter(typeof(JsonStringEnumConverter<ClientMode>))]
+public enum ClientMode
+{
+    DualPc,
+    SinglePc
+}
+
 [JsonSerializable(typeof(ClientSettings))]
+[JsonSerializable(typeof(ClientMode))]
 internal partial class ClientSettingsJsonContext : JsonSerializerContext
 {
 }
@@ -13,6 +21,9 @@ public sealed class ClientSettings
 {
     public const string SettingsFileName = "mic-helper-client-settings.json";
 
+    public ClientMode Mode { get; set; } = ClientMode.DualPc;
+    public string? MicrophoneId { get; set; }
+    public string? MicrophoneName { get; set; }
     public bool RunOnStartup { get; set; }
     public int Port { get; set; } = ProtocolConstants.DefaultPort;
     public string? ServerIp { get; set; }
@@ -25,6 +36,9 @@ public sealed class ClientSettings
     public int OverlayHeight { get; set; } = 128;
     public bool IsPaused { get; set; }
     public bool DebugLogging { get; set; }
+
+    [JsonIgnore]
+    public string? SettingsDirectory { get; set; }
 
     public static string GetFilePath(string? directory = null)
     {
@@ -43,6 +57,7 @@ public sealed class ClientSettings
                 var settings = JsonSerializer.Deserialize(json, ClientSettingsJsonContext.Default.ClientSettings);
                 if (settings != null)
                 {
+                    settings.SettingsDirectory = directory;
                     if (settings.Port is < 1 or > 65535) settings.Port = ProtocolConstants.DefaultPort;
                     if (settings.RetryTimeout < 1) settings.RetryTimeout = ProtocolConstants.DefaultRetryTimeoutSeconds;
                     settings.Opacity = Math.Clamp(settings.Opacity, 0, 100);
@@ -58,12 +73,17 @@ public sealed class ClientSettings
             }
         }
 
-        return new ClientSettings();
+        return new ClientSettings { SettingsDirectory = directory };
     }
 
     public void Save(string? directory = null)
     {
-        var path = GetFilePath(directory);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            SettingsDirectory = directory;
+        }
+
+        var path = GetFilePath(SettingsDirectory);
         try
         {
             var dir = Path.GetDirectoryName(path);

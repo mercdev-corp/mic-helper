@@ -3,6 +3,7 @@ using System.Windows.Forms;
 using MicHelper.Client.Config;
 using MicHelper.Client.Overlay;
 using MicHelper.Client.UI;
+using MicHelper.Shared.Audio;
 using MicHelper.Shared.Network;
 using MicHelper.Shared.Protocol;
 using MicHelper.Shared.UI;
@@ -15,6 +16,7 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
     private readonly OverlayAssetManager _assetManager;
     private readonly OverlayForm _overlayForm;
     private readonly UdpListener _udpListener;
+    private readonly IAudioMonitor _audioMonitor;
 
     private readonly NotifyIcon _trayIcon;
     private readonly ToolStripMenuItem _menuPauseResume;
@@ -25,13 +27,23 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
     private readonly SynchronizationContext _syncContext;
     private ClientSettingsForm? _settingsForm;
 
-    public ClientTrayApplicationContext()
+    public ClientTrayApplicationContext() : this(null, null, null, null, null)
+    {
+    }
+
+    internal ClientTrayApplicationContext(
+        ClientSettings? settings,
+        UdpListener? udpListener,
+        IAudioMonitor? audioMonitor,
+        OverlayAssetManager? assetManager,
+        OverlayForm? overlayForm)
     {
         _syncContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
-        _settings = ClientSettings.Load();
-        _assetManager = new OverlayAssetManager();
-        _overlayForm = new OverlayForm(_settings, _assetManager);
-        _udpListener = new UdpListener(_settings.Port);
+        _settings = settings ?? ClientSettings.Load();
+        _assetManager = assetManager ?? new OverlayAssetManager();
+        _overlayForm = overlayForm ?? new OverlayForm(_settings, _assetManager);
+        _udpListener = udpListener ?? new UdpListener(_settings.Port);
+        _audioMonitor = audioMonitor ?? new WindowsAudioMonitor();
 
         // Build Tray Menu
         _contextMenu = new ContextMenuStrip();
@@ -58,20 +70,38 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
         _udpListener.TargetServerStateChanged += OnServerStateChanged;
         _udpListener.TargetServerConnectionChanged += OnServerConnectionChanged;
 
-        // Apply startup configuration
+        // Subscribe to audio monitor events
+        _audioMonitor.MuteChanged += OnAudioMuteChanged;
+        _audioMonitor.ConnectionChanged += OnAudioConnectionChanged;
+        _audioMonitor.DevicesChanged += OnDevicesChanged;
+
+        // Apply startup configuration based on Mode and IsPaused
         if (_settings.IsPaused)
         {
             _menuPauseResume.Text = "Resume";
             _overlayForm.SetLiveState(MicState.Paused, isPaused: true);
             UpdateStatus(MicState.Paused);
         }
-        else
+        else if (_settings.Mode == ClientMode.SinglePc)
         {
+            _udpListener.Stop();
+            _audioMonitor.StartMonitoring(_settings.MicrophoneId, _settings.RetryTimeout);
+            UpdateAudioState();
+        }
+        else // DualPc
+        {
+            _audioMonitor.StopMonitoring();
             UpdateStatus(MicState.Disconnected);
             _overlayForm.SetLiveState(MicState.Disconnected, isPaused: false);
             _udpListener.Start(_settings.ServerIp, _settings.RetryTimeout);
         }
     }
+
+    internal ClientSettings Settings => _settings;
+    internal UdpListener UdpListener => _udpListener;
+    internal IAudioMonitor AudioMonitor => _audioMonitor;
+    internal OverlayForm OverlayForm => _overlayForm;
+    internal NotifyIcon TrayIcon => _trayIcon;
 
     private void PostToUiThread(Action action)
     {
@@ -85,11 +115,123 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
         }
     }
 
+    public void SwitchMode(ClientMode newMode)
+    {
+        PostToUiThread(() =>
+        {
+            if (_settings.Mode == newMode) return;
+
+            _settings.Mode = newMode;
+            _settings.Save();
+
+            if (_settings.IsPaused)
+            {
+                _udpListener.Stop();
+                _audioMonitor.StopMonitoring();
+                _overlayForm.SetLiveState(MicState.Paused, isPaused: true);
+                UpdateStatus(MicState.Paused);
+                return;
+            }
+
+            if (newMode == ClientMode.SinglePc)
+            {
+                _udpListener.Stop();
+                _audioMonitor.StartMonitoring(_settings.MicrophoneId, _settings.RetryTimeout);
+                UpdateAudioState();
+            }
+            else // DualPc
+            {
+                _audioMonitor.StopMonitoring();
+                _overlayForm.SetLiveState(MicState.Disconnected, isPaused: false);
+                UpdateStatus(MicState.Disconnected);
+                _udpListener.Start(_settings.ServerIp, _settings.RetryTimeout);
+            }
+        });
+    }
+
+    public void SetMicrophone(string? micId, string? micName)
+    {
+        PostToUiThread(() =>
+        {
+            _settings.MicrophoneId = micId;
+            _settings.MicrophoneName = micName;
+            _settings.Save();
+
+            if (_settings.Mode == ClientMode.SinglePc && !_settings.IsPaused)
+            {
+                _audioMonitor.StartMonitoring(micId, _settings.RetryTimeout);
+                UpdateAudioState();
+            }
+        });
+    }
+
+    public void SetRetryTimeout(int timeout)
+    {
+        PostToUiThread(() =>
+        {
+            _settings.RetryTimeout = timeout;
+            _settings.Save();
+
+            if (!_settings.IsPaused)
+            {
+                if (_settings.Mode == ClientMode.SinglePc)
+                {
+                    _audioMonitor.StartMonitoring(_settings.MicrophoneId, timeout);
+                }
+                else
+                {
+                    _udpListener.Start(_settings.ServerIp, timeout);
+                }
+            }
+        });
+    }
+
+    private void UpdateAudioState()
+    {
+        if (_settings.Mode != ClientMode.SinglePc)
+        {
+            return;
+        }
+
+        if (_settings.IsPaused)
+        {
+            _overlayForm.SetLiveState(MicState.Paused, isPaused: true);
+            UpdateStatus(MicState.Paused);
+            return;
+        }
+
+        if (!_audioMonitor.IsConnected)
+        {
+            _overlayForm.SetLiveState(MicState.Disconnected, isPaused: false);
+            UpdateStatus(MicState.Disconnected);
+            return;
+        }
+
+        var micState = _audioMonitor.IsMuted ? MicState.Muted : MicState.Unmuted;
+        _overlayForm.SetLiveState(micState, isPaused: false);
+        UpdateStatus(micState);
+    }
+
+    private void OnAudioMuteChanged(bool isMuted)
+    {
+        PostToUiThread(UpdateAudioState);
+    }
+
+    private void OnAudioConnectionChanged(bool isConnected)
+    {
+        PostToUiThread(UpdateAudioState);
+    }
+
+    private void OnDevicesChanged()
+    {
+        PostToUiThread(UpdateAudioState);
+    }
+
     private void OnServerStateChanged(MicState state)
     {
         PostToUiThread(() =>
         {
-            if (!_settings.IsPaused)
+            if (_settings.Mode == ClientMode.DualPc && !_settings.IsPaused)
             {
                 _overlayForm.SetLiveState(state, isPaused: false);
                 UpdateStatus(state);
@@ -101,7 +243,7 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
     {
         PostToUiThread(() =>
         {
-            if (!_settings.IsPaused)
+            if (_settings.Mode == ClientMode.DualPc && !_settings.IsPaused)
             {
                 var state = isConnected ? _udpListener.LastReportedState : MicState.Disconnected;
                 _overlayForm.SetLiveState(state, isPaused: false);
@@ -114,7 +256,8 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
     {
         try
         {
-            using var icon = StatusIconGenerator.CreateClientStatusIcon(state);
+            bool isSinglePc = _settings.Mode == ClientMode.SinglePc;
+            using var icon = StatusIconGenerator.CreateStatusIcon(state, isServer: isSinglePc);
             var oldIcon = _trayIcon.Icon;
             _trayIcon.Icon = (Icon)icon.Clone();
             oldIcon?.Dispose();
@@ -122,14 +265,16 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
             var statusText = state switch
             {
                 MicState.Paused => "Paused",
-                MicState.Disconnected => "Server Disconnected",
+                MicState.Disconnected => isSinglePc ? "Device Disconnected" : "Server Disconnected",
                 MicState.Muted => "Microphone Muted",
                 MicState.Unmuted => "Microphone Unmuted",
                 _ => "Unknown"
             };
 
-            var srvText = !string.IsNullOrEmpty(_settings.ServerIp) ? $" - {_settings.ServerIp}" : "";
-            _trayIcon.Text = TruncateText($"Mic Helper Client ({statusText}){srvText}", 63);
+            var detailText = isSinglePc
+                ? (!string.IsNullOrEmpty(_settings.MicrophoneName) ? $" - {_settings.MicrophoneName}" : "")
+                : (!string.IsNullOrEmpty(_settings.ServerIp) ? $" - {_settings.ServerIp}" : "");
+            _trayIcon.Text = TruncateText($"Mic Helper Client ({statusText}){detailText}", 63);
         }
         catch (Exception ex)
         {
@@ -153,14 +298,24 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
 
         if (newPaused)
         {
+            _udpListener.Stop();
+            _audioMonitor.StopMonitoring();
             _overlayForm.SetLiveState(MicState.Paused, isPaused: true);
             UpdateStatus(MicState.Paused);
         }
         else
         {
-            _overlayForm.SetLiveState(MicState.Disconnected, isPaused: false);
-            UpdateStatus(MicState.Disconnected);
-            _udpListener.Start(_settings.ServerIp, _settings.RetryTimeout);
+            if (_settings.Mode == ClientMode.SinglePc)
+            {
+                _audioMonitor.StartMonitoring(_settings.MicrophoneId, _settings.RetryTimeout);
+                UpdateAudioState();
+            }
+            else
+            {
+                _overlayForm.SetLiveState(MicState.Disconnected, isPaused: false);
+                UpdateStatus(MicState.Disconnected);
+                _udpListener.Start(_settings.ServerIp, _settings.RetryTimeout);
+            }
         }
     }
 
@@ -176,8 +331,18 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
             _settingsForm = new ClientSettingsForm(
                 _settings,
                 _udpListener,
+                _audioMonitor,
                 _overlayForm,
-                onPortChanged: newPort => _udpListener.Rebind(newPort, _settings.ServerIp));
+                onModeChanged: newMode => SwitchMode(newMode),
+                onMicrophoneChanged: (micId, micName) => SetMicrophone(micId, micName),
+                onPortChanged: newPort =>
+                {
+                    if (_settings.Mode == ClientMode.DualPc)
+                    {
+                        _udpListener.Rebind(newPort, _settings.ServerIp);
+                    }
+                },
+                onTimeoutChanged: newTimeout => SetRetryTimeout(newTimeout));
 
             _settingsForm.FormClosed += (_, _) => _settingsForm = null;
             _settingsForm.Show();
@@ -194,16 +359,26 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
         ExitThread();
     }
 
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _trayIcon.Visible = false;
+            _trayIcon.Dispose();
+
+            _overlayForm.Close();
+            _overlayForm.Dispose();
+            _assetManager.Dispose();
+            _udpListener.Dispose();
+            _audioMonitor.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
+
     protected override void ExitThreadCore()
     {
-        _trayIcon.Visible = false;
-        _trayIcon.Dispose();
-
-        _overlayForm.Close();
-        _overlayForm.Dispose();
-        _assetManager.Dispose();
-        _udpListener.Dispose();
-
+        Dispose(true);
         base.ExitThreadCore();
     }
 }

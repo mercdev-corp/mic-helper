@@ -27,10 +27,9 @@ public sealed class ServerSettingsForm : Form
     private Button _btnOpenLogs = null!;
     private Button _btnClose = null!;
     private Label _lblVersion = null!;
+    private MicrophoneSelectionController _micController = null!;
 
     internal Label VersionLabel => _lblVersion;
-
-    private record MicComboItem(string? Id, string DisplayName, bool IsMissing);
 
     public ServerSettingsForm(
         ServerSettings settings,
@@ -123,12 +122,15 @@ public sealed class ServerSettingsForm : Form
         {
             Location = new Point(20, 85),
             Width = 340,
-            DropDownStyle = ComboBoxStyle.DropDownList,
-            DrawMode = DrawMode.OwnerDrawFixed,
-            ItemHeight = 22
+            DropDownStyle = ComboBoxStyle.DropDownList
         };
-        _cboMicrophone.DrawItem += CboMicrophone_DrawItem;
-        _cboMicrophone.SelectedIndexChanged += CboMicrophone_SelectedIndexChanged;
+        _micController = new MicrophoneSelectionController(_cboMicrophone, _audioMonitor, item =>
+        {
+            _settings.MicrophoneId = item.Id;
+            _settings.MicrophoneName = item.DisplayName;
+            _settings.Save();
+            _onMicrophoneChanged(item.Id);
+        });
 
         var lblTimeout = new Label
         {
@@ -210,87 +212,7 @@ public sealed class ServerSettingsForm : Form
         _numTimeout.Value = Math.Clamp(_settings.RetryTimeout, 1, 300);
         _txtPort.Text = _settings.Port.ToString();
 
-        PopulateMicrophoneList();
-    }
-
-    private void PopulateMicrophoneList()
-    {
-        _cboMicrophone.Items.Clear();
-
-        var activeDevices = _audioMonitor.GetActiveCaptureDevices();
-        string? savedId = _settings.MicrophoneId;
-        string? savedName = _settings.MicrophoneName;
-
-        bool savedFound = false;
-        if (!string.IsNullOrEmpty(savedId))
-        {
-            savedFound = activeDevices.Any(d => string.Equals(d.Id, savedId, StringComparison.OrdinalIgnoreCase));
-        }
-
-        // If saved mic is not found and was configured, add as first item with missing flag
-        if (!savedFound && !string.IsNullOrEmpty(savedId))
-        {
-            var missingName = !string.IsNullOrEmpty(savedName) ? savedName : "(Missing Microphone)";
-            var missingItem = new MicComboItem(savedId, missingName, IsMissing: true);
-            _cboMicrophone.Items.Add(missingItem);
-            _cboMicrophone.SelectedItem = missingItem;
-        }
-
-        // Add currently connected devices
-        foreach (var dev in activeDevices)
-        {
-            var item = new MicComboItem(dev.Id, dev.Name + (dev.IsDefault ? " (Default)" : ""), IsMissing: false);
-            _cboMicrophone.Items.Add(item);
-
-            if (savedFound && string.Equals(dev.Id, savedId, StringComparison.OrdinalIgnoreCase))
-            {
-                _cboMicrophone.SelectedItem = item;
-            }
-        }
-
-        // If nothing selected yet, select first or default
-        if (_cboMicrophone.SelectedItem == null && _cboMicrophone.Items.Count > 0)
-        {
-            _cboMicrophone.SelectedIndex = 0;
-            if (_cboMicrophone.SelectedItem is MicComboItem selectedItem)
-            {
-                _settings.MicrophoneId = selectedItem.Id;
-                _settings.MicrophoneName = selectedItem.DisplayName;
-                _settings.Save();
-            }
-        }
-    }
-
-    private void CboMicrophone_DrawItem(object? sender, DrawItemEventArgs e)
-    {
-        if (e.Index < 0 || e.Index >= _cboMicrophone.Items.Count) return;
-
-        e.DrawBackground();
-
-        if (_cboMicrophone.Items[e.Index] is MicComboItem item)
-        {
-            using var brush = new SolidBrush(item.IsMissing ? Color.Red : e.ForeColor);
-            var fontStyle = item.IsMissing ? (e.Font?.Style ?? FontStyle.Regular) | FontStyle.Strikeout : (e.Font?.Style ?? FontStyle.Regular);
-            using var font = new Font(e.Font ?? SystemFonts.DefaultFont, fontStyle);
-
-            e.Graphics.DrawString(item.DisplayName, font, brush, e.Bounds.X + 2, e.Bounds.Y + 2);
-        }
-
-        e.DrawFocusRectangle();
-    }
-
-    private void CboMicrophone_SelectedIndexChanged(object? sender, EventArgs e)
-    {
-        if (_cboMicrophone.SelectedItem is MicComboItem selectedItem)
-        {
-            if (!selectedItem.IsMissing)
-            {
-                _settings.MicrophoneId = selectedItem.Id;
-                _settings.MicrophoneName = selectedItem.DisplayName;
-                _settings.Save();
-                _onMicrophoneChanged(selectedItem.Id);
-            }
-        }
+        _micController.Populate(_settings.MicrophoneId, _settings.MicrophoneName);
     }
 
     private void ChkStartup_CheckedChanged(object? sender, EventArgs e)
