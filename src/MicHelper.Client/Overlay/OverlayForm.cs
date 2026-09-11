@@ -28,6 +28,7 @@ public sealed class OverlayForm : Form
 
     public bool IsWysiwygMode => _isWysiwygMode;
     public bool IsPulseTimerRunning => _pulseTimer.Enabled;
+    public MicState ActualLiveState => _actualLiveState;
     internal IntPtr WinEventHookHandle => _hWinEventHook;
 
     protected override bool ShowWithoutActivation => true;

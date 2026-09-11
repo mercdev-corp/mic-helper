@@ -1,5 +1,8 @@
+using MicHelper.Client;
 using MicHelper.Client.Config;
 using MicHelper.Client.Overlay;
+using MicHelper.Client.UI;
+using MicHelper.Shared.Audio;
 using MicHelper.Shared.Network;
 using MicHelper.Shared.Protocol;
 using MicHelper.Shared.UI;
@@ -20,6 +23,9 @@ public sealed class ClientOverlayAndSettingsTests
         {
             var original = new ClientSettings
             {
+                Mode = ClientMode.SinglePc,
+                MicrophoneId = "mic-test-uuid-42",
+                MicrophoneName = "Blue Yeti",
                 RunOnStartup = true,
                 Port = 13888,
                 ServerIp = "192.168.1.150",
@@ -40,6 +46,9 @@ public sealed class ClientOverlayAndSettingsTests
             Assert.IsTrue(File.Exists(filePath));
 
             var loaded = ClientSettings.Load(tempFolder);
+            Assert.AreEqual(original.Mode, loaded.Mode);
+            Assert.AreEqual(original.MicrophoneId, loaded.MicrophoneId);
+            Assert.AreEqual(original.MicrophoneName, loaded.MicrophoneName);
             Assert.AreEqual(original.RunOnStartup, loaded.RunOnStartup);
             Assert.AreEqual(original.Port, loaded.Port);
             Assert.AreEqual(original.ServerIp, loaded.ServerIp);
@@ -52,6 +61,85 @@ public sealed class ClientOverlayAndSettingsTests
             Assert.AreEqual(original.OverlayHeight, loaded.OverlayHeight);
             Assert.AreEqual(original.IsPaused, loaded.IsPaused);
             Assert.AreEqual(original.DebugLogging, loaded.DebugLogging);
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
+    }
+
+    [TestMethod]
+    public void ClientSettings_LegacyJsonWithoutMode_DefaultsToDualPc()
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "ClientSettingsLegacy_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            var filePath = ClientSettings.GetFilePath(tempFolder);
+            // Simulate legacy JSON that lacks Mode, MicrophoneId, MicrophoneName
+            File.WriteAllText(filePath, "{\"Port\":13400,\"ServerIp\":\"10.0.0.5\",\"RetryTimeout\":6}");
+
+            var loaded = ClientSettings.Load(tempFolder);
+            Assert.AreEqual(ClientMode.DualPc, loaded.Mode);
+            Assert.AreEqual(13400, loaded.Port);
+            Assert.AreEqual("10.0.0.5", loaded.ServerIp);
+            Assert.AreEqual(6, loaded.RetryTimeout);
+            Assert.IsNull(loaded.MicrophoneId);
+            Assert.IsNull(loaded.MicrophoneName);
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
+    }
+
+    [TestMethod]
+    public void ClientSettings_SettingsCoexistence_SurvivesCrossModeModifications()
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "ClientSettingsCoexist_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            // 1. Initially configured in Dual PC mode
+            var settings = new ClientSettings
+            {
+                Mode = ClientMode.DualPc,
+                ServerIp = "192.168.1.50",
+                Port = 13500,
+                RetryTimeout = 5
+            };
+            settings.Save(tempFolder);
+
+            // 2. User switches to Single PC mode and configures microphone
+            var step1 = ClientSettings.Load(tempFolder);
+            Assert.AreEqual(ClientMode.DualPc, step1.Mode);
+            step1.Mode = ClientMode.SinglePc;
+            step1.MicrophoneId = "mic-guid-999";
+            step1.MicrophoneName = "USB Condenser Mic";
+            step1.Save(tempFolder);
+
+            // Verify both Dual PC and Single PC fields coexist
+            var step2 = ClientSettings.Load(tempFolder);
+            Assert.AreEqual(ClientMode.SinglePc, step2.Mode);
+            Assert.AreEqual("mic-guid-999", step2.MicrophoneId);
+            Assert.AreEqual("USB Condenser Mic", step2.MicrophoneName);
+            Assert.AreEqual("192.168.1.50", step2.ServerIp);
+            Assert.AreEqual(13500, step2.Port);
+
+            // 3. User switches back to Dual PC mode and changes server IP
+            step2.Mode = ClientMode.DualPc;
+            step2.ServerIp = "192.168.1.60";
+            step2.Save(tempFolder);
+
+            // Verify Single PC mic settings were not erased
+            var step3 = ClientSettings.Load(tempFolder);
+            Assert.AreEqual(ClientMode.DualPc, step3.Mode);
+            Assert.AreEqual("192.168.1.60", step3.ServerIp);
+            Assert.AreEqual(13500, step3.Port);
+            Assert.AreEqual("mic-guid-999", step3.MicrophoneId);
+            Assert.AreEqual("USB Condenser Mic", step3.MicrophoneName);
         }
         finally
         {
@@ -510,7 +598,7 @@ public sealed class ClientOverlayAndSettingsTests
             Assert.AreEqual(SystemColors.GrayText, form.VersionLabel.ForeColor);
             Assert.IsTrue(form.Controls.Contains(form.VersionLabel));
 
-            // Verify position is between left button (X=20, Width=100) and right button (X=260, Width=100)
+        // Verify position is between left button (X=20, Width=100) and right button (X=260, Width=100)
             Assert.AreEqual(475, form.VersionLabel.Location.Y);
             Assert.IsGreaterThanOrEqualTo(form.VersionLabel.Location.X, 120);
             Assert.IsLessThanOrEqualTo(form.VersionLabel.Right, 260);
@@ -518,6 +606,370 @@ public sealed class ClientOverlayAndSettingsTests
         finally
         {
             if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
+    }
+
+    [TestMethod]
+    public void ClientTrayApplicationContext_Startup_InDualPcMode_StartsUdpListener_DoesNotStartAudioMonitor()
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "ClientStartupDualPc_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            var settings = new ClientSettings
+            {
+                Mode = ClientMode.DualPc,
+                Port = 13981
+            };
+            var mockAudio = new MockAudioMonitor();
+            using var listener = new UdpListener(13981);
+            using var assetMgr = new OverlayAssetManager(tempFolder);
+            using var overlay = new OverlayForm(settings, assetMgr);
+            using var context = new ClientTrayApplicationContext(settings, listener, mockAudio, assetMgr, overlay);
+
+            Assert.IsFalse(mockAudio.IsMonitoring);
+            Assert.IsFalse(listener.IsPaused);
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
+    }
+
+    [TestMethod]
+    public void ClientTrayApplicationContext_Startup_InSinglePcMode_StartsAudioMonitor_DoesNotStartUdpListener()
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "ClientStartupSinglePc_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            var settings = new ClientSettings
+            {
+                Mode = ClientMode.SinglePc,
+                MicrophoneId = "mic-test-startup",
+                RetryTimeout = 6,
+                Port = 13982
+            };
+            var mockAudio = new MockAudioMonitor();
+            using var listener = new UdpListener(13982);
+            using var assetMgr = new OverlayAssetManager(tempFolder);
+            using var overlay = new OverlayForm(settings, assetMgr);
+            using var context = new ClientTrayApplicationContext(settings, listener, mockAudio, assetMgr, overlay);
+
+            Assert.IsTrue(mockAudio.IsMonitoring);
+            Assert.AreEqual("mic-test-startup", mockAudio.TargetDeviceId);
+            Assert.AreEqual(6, mockAudio.RetryTimeout);
+            Assert.IsTrue(listener.IsPaused);
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
+    }
+
+    [TestMethod]
+    public void ClientTrayApplicationContext_SwitchMode_TransitionsSubsystemsAndIsolatesResources()
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "ClientSwitchMode_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            var settings = new ClientSettings
+            {
+                Mode = ClientMode.DualPc,
+                MicrophoneId = "mic-usb-123",
+                RetryTimeout = 4,
+                Port = 13983
+            };
+            var mockAudio = new MockAudioMonitor();
+            using var listener = new UdpListener(13983);
+            using var assetMgr = new OverlayAssetManager(tempFolder);
+            using var overlay = new OverlayForm(settings, assetMgr);
+            using var context = new ClientTrayApplicationContext(settings, listener, mockAudio, assetMgr, overlay);
+
+            // Initially Dual PC
+            Assert.IsFalse(mockAudio.IsMonitoring);
+            Assert.IsFalse(listener.IsPaused);
+
+            // Switch to Single PC
+            context.SwitchMode(ClientMode.SinglePc);
+            Assert.IsTrue(listener.IsPaused, "UDP listener must be paused/stopped in Single PC mode");
+            Assert.IsTrue(mockAudio.IsMonitoring, "Audio monitor must be active in Single PC mode");
+            Assert.AreEqual("mic-usb-123", mockAudio.TargetDeviceId);
+            Assert.AreEqual(4, mockAudio.RetryTimeout);
+            Assert.AreEqual(ClientMode.SinglePc, settings.Mode);
+
+            // Switch back to Dual PC
+            context.SwitchMode(ClientMode.DualPc);
+            Assert.IsFalse(mockAudio.IsMonitoring, "Audio monitor must be stopped in Dual PC mode");
+            Assert.IsFalse(listener.IsPaused, "UDP listener must be active in Dual PC mode");
+            Assert.AreEqual(ClientMode.DualPc, settings.Mode);
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
+    }
+
+    [TestMethod]
+    public void ClientTrayApplicationContext_SinglePc_AudioEventsUpdateState()
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "ClientAudioEvents_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            var settings = new ClientSettings
+            {
+                Mode = ClientMode.SinglePc,
+                MicrophoneId = "mic-usb-456",
+                MicrophoneName = "HyperX Mic",
+                Port = 13984
+            };
+            var mockAudio = new MockAudioMonitor();
+            using var listener = new UdpListener(13984);
+            using var assetMgr = new OverlayAssetManager(tempFolder);
+            using var overlay = new OverlayForm(settings, assetMgr);
+            _ = overlay.Handle;
+            using var context = new ClientTrayApplicationContext(settings, listener, mockAudio, assetMgr, overlay);
+
+            // Mute changed event
+            mockAudio.TriggerMuteChanged(true);
+            Assert.AreEqual(MicState.Muted, overlay.ActualLiveState);
+            StringAssert.Contains(context.TrayIcon.Text, "Microphone Muted");
+
+            mockAudio.TriggerMuteChanged(false);
+            Assert.AreEqual(MicState.Unmuted, overlay.ActualLiveState);
+            StringAssert.Contains(context.TrayIcon.Text, "Microphone Unmuted");
+
+            // Disconnect event
+            mockAudio.TriggerConnectionChanged(false);
+            Assert.AreEqual(MicState.Disconnected, overlay.ActualLiveState);
+            StringAssert.Contains(context.TrayIcon.Text, "Device Disconnected");
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
+    }
+
+    [TestMethod]
+    public void ClientSettingsForm_InitializesWithDualPcLayout_AdaptsToSinglePcLayout()
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "ClientFormLayout_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            var settings = new ClientSettings
+            {
+                Mode = ClientMode.DualPc,
+                ServerIp = "10.0.0.1",
+                Port = 13985,
+                RetryTimeout = 5
+            };
+            var mockAudio = new MockAudioMonitor
+            {
+                ActiveDevices = new List<AudioDeviceInfo>
+                {
+                    new("dev-1", "Headset Mic", true)
+                }
+            };
+            using var listener = new UdpListener(13985);
+            using var assetMgr = new OverlayAssetManager(tempFolder);
+            using var overlay = new OverlayForm(settings, assetMgr);
+            using var form = new ClientSettingsForm(settings, listener, mockAudio, overlay);
+            _ = form.Handle;
+            form.Visible = true;
+
+            // Dual PC initial layout assertions
+            Assert.AreEqual(0, form.ModeComboBox.SelectedIndex);
+            Assert.IsTrue(form.DualPcNoteLabel.Visible);
+            Assert.IsTrue(form.ServerComboBox.Visible);
+            Assert.IsTrue(form.PortTextBox.Visible);
+            Assert.IsFalse(form.MicrophoneComboBox.Visible);
+            Assert.AreEqual("Retry timeout (seconds):", form.TimeoutLabel.Text);
+
+            // Transition to Single PC mode via ComboBox
+            form.ModeComboBox.SelectedIndex = 1;
+
+            // Single PC layout assertions
+            Assert.IsFalse(form.DualPcNoteLabel.Visible);
+            Assert.IsFalse(form.ServerComboBox.Visible);
+            Assert.IsFalse(form.PortTextBox.Visible);
+            Assert.IsTrue(form.MicrophoneComboBox.Visible);
+            Assert.AreEqual("Microphone reconnect check (seconds):", form.TimeoutLabel.Text);
+            Assert.AreEqual(new Point(20, 155), form.TimeoutLabel.Location);
+            Assert.AreEqual(new Point(20, 178), form.TimeoutNumeric.Location);
+
+            // Transition back to Dual PC mode
+            form.ModeComboBox.SelectedIndex = 0;
+            Assert.IsTrue(form.DualPcNoteLabel.Visible);
+            Assert.IsTrue(form.ServerComboBox.Visible);
+            Assert.IsTrue(form.PortTextBox.Visible);
+            Assert.IsFalse(form.MicrophoneComboBox.Visible);
+            Assert.AreEqual("Retry timeout (seconds):", form.TimeoutLabel.Text);
+            Assert.AreEqual(new Point(160, 162), form.TimeoutLabel.Location);
+            Assert.AreEqual(new Point(160, 184), form.TimeoutNumeric.Location);
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
+    }
+
+    [TestMethod]
+    public void ClientSettingsForm_ModeSwitch_ImmediatelyPersistsAndNotifies()
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "ClientFormModePersist_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            var settings = new ClientSettings { Mode = ClientMode.DualPc };
+            settings.Save(tempFolder);
+
+            var mockAudio = new MockAudioMonitor();
+            using var listener = new UdpListener(13986);
+            using var assetMgr = new OverlayAssetManager(tempFolder);
+            using var overlay = new OverlayForm(settings, assetMgr);
+
+            ClientMode? notifiedMode = null;
+            using var form = new ClientSettingsForm(
+                settings,
+                listener,
+                mockAudio,
+                overlay,
+                onModeChanged: m => notifiedMode = m);
+            _ = form.Handle;
+
+            // Switch to Single PC
+            form.ModeComboBox.SelectedIndex = 1;
+
+            Assert.AreEqual(ClientMode.SinglePc, notifiedMode);
+            Assert.AreEqual(ClientMode.SinglePc, settings.Mode);
+
+            var reloaded = ClientSettings.Load(tempFolder);
+            Assert.AreEqual(ClientMode.SinglePc, reloaded.Mode);
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
+    }
+
+    [TestMethod]
+    public void ClientSettingsForm_MicrophoneSelection_ImmediatelyPersistsAndNotifies()
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "ClientFormMicPersist_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            var settings = new ClientSettings
+            {
+                Mode = ClientMode.SinglePc
+            };
+            settings.Save(tempFolder);
+
+            var mockAudio = new MockAudioMonitor
+            {
+                ActiveDevices = new List<AudioDeviceInfo>
+                {
+                    new("dev-mic-1", "Microphone A", true),
+                    new("dev-mic-2", "Microphone B", false)
+                }
+            };
+            using var listener = new UdpListener(13987);
+            using var assetMgr = new OverlayAssetManager(tempFolder);
+            using var overlay = new OverlayForm(settings, assetMgr);
+
+            string? notifiedId = null;
+            string? notifiedName = null;
+
+            using var form = new ClientSettingsForm(
+                settings,
+                listener,
+                mockAudio,
+                overlay,
+                onMicrophoneChanged: (id, name) =>
+                {
+                    notifiedId = id;
+                    notifiedName = name;
+                });
+            _ = form.Handle;
+
+            // Select Microphone B
+            form.MicrophoneComboBox.SelectedIndex = 1;
+
+            Assert.AreEqual("dev-mic-2", settings.MicrophoneId);
+            Assert.AreEqual("dev-mic-2", notifiedId);
+            Assert.AreEqual("Microphone B", notifiedName);
+
+            var reloaded = ClientSettings.Load(tempFolder);
+            Assert.AreEqual("dev-mic-2", reloaded.MicrophoneId);
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
+    }
+
+    private sealed class MockAudioMonitor : IAudioMonitor
+    {
+        public bool IsMonitoring { get; private set; }
+        public string? TargetDeviceId { get; private set; }
+        public int RetryTimeout { get; private set; }
+        public bool IsMuted { get; set; }
+        public bool IsConnected { get; set; } = true;
+        public string? CurrentDeviceId => TargetDeviceId;
+        public string? CurrentDeviceName => "Mock Mic";
+        public List<AudioDeviceInfo> ActiveDevices { get; set; } = new();
+
+        public IReadOnlyList<AudioDeviceInfo> GetActiveCaptureDevices() => ActiveDevices;
+        public AudioDeviceInfo? GetDefaultCaptureDevice() => ActiveDevices.FirstOrDefault(d => d.IsDefault);
+
+        public void StartMonitoring(string? targetDeviceId, int retryTimeoutSeconds = 5)
+        {
+            IsMonitoring = true;
+            TargetDeviceId = targetDeviceId;
+            RetryTimeout = retryTimeoutSeconds;
+        }
+
+        public void StopMonitoring()
+        {
+            IsMonitoring = false;
+        }
+
+        public void TriggerMuteChanged(bool muted)
+        {
+            IsMuted = muted;
+            MuteChanged?.Invoke(muted);
+        }
+
+        public void TriggerConnectionChanged(bool connected)
+        {
+            IsConnected = connected;
+            ConnectionChanged?.Invoke(connected);
+        }
+
+        public void TriggerDevicesChanged()
+        {
+            DevicesChanged?.Invoke();
+        }
+
+#pragma warning disable CS0067
+        public event Action<bool>? MuteChanged;
+        public event Action<bool>? ConnectionChanged;
+        public event Action? DevicesChanged;
+#pragma warning restore CS0067
+
+        public void Dispose()
+        {
+            IsMonitoring = false;
         }
     }
 }

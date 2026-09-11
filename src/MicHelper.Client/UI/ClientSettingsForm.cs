@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Windows.Forms;
 using MicHelper.Client.Config;
 using MicHelper.Client.Overlay;
+using MicHelper.Shared.Audio;
 using MicHelper.Shared.Common;
 using MicHelper.Shared.Network;
 using MicHelper.Shared.UI;
@@ -13,13 +14,25 @@ public sealed class ClientSettingsForm : Form
 {
     private readonly ClientSettings _settings;
     private readonly UdpListener _udpListener;
+    private readonly IAudioMonitor _audioMonitor;
     private readonly OverlayForm _overlayForm;
-    private readonly Action<int> _onPortChanged;
+    private readonly Action<ClientMode>? _onModeChanged;
+    private readonly Action<string?, string>? _onMicrophoneChanged;
+    private readonly Action<int>? _onPortChanged;
+    private readonly Action<int>? _onTimeoutChanged;
 
+    private ComboBox _cboMode = null!;
     private CheckBox _chkStartup = null!;
     private CheckBox _chkDebugLogging = null!;
-    private TextBox _txtPort = null!;
+    private Label _lblDualPcNote = null!;
+    private Label _lblServer = null!;
     private ComboBox _cboServerIp = null!;
+    private Label _lblPort = null!;
+    private TextBox _txtPort = null!;
+    private Label _lblMicrophone = null!;
+    private ComboBox _cboMicrophone = null!;
+    private MicrophoneSelectionController _micController = null!;
+    private Label _lblTimeout = null!;
     private NumericUpDown _numTimeout = null!;
     private TrackBar _trkOpacity = null!;
     private Label _lblOpacityVal = null!;
@@ -33,6 +46,15 @@ public sealed class ClientSettingsForm : Form
     private bool _isUpdatingControls;
 
     internal Label VersionLabel => _lblVersion;
+    internal ComboBox ModeComboBox => _cboMode;
+    internal Label DualPcNoteLabel => _lblDualPcNote;
+    internal ComboBox ServerComboBox => _cboServerIp;
+    internal TextBox PortTextBox => _txtPort;
+    internal Label MicrophoneLabel => _lblMicrophone;
+    internal ComboBox MicrophoneComboBox => _cboMicrophone;
+    internal Label TimeoutLabel => _lblTimeout;
+    internal NumericUpDown TimeoutNumeric => _numTimeout;
+    internal MicrophoneSelectionController MicController => _micController;
 
     private record ServerComboItem(string? Ip, string DisplayText, bool IsOffline);
 
@@ -41,11 +63,28 @@ public sealed class ClientSettingsForm : Form
         UdpListener udpListener,
         OverlayForm overlayForm,
         Action<int> onPortChanged)
+        : this(settings, udpListener, new WindowsAudioMonitor(), overlayForm, null, null, onPortChanged, null)
+    {
+    }
+
+    public ClientSettingsForm(
+        ClientSettings settings,
+        UdpListener udpListener,
+        IAudioMonitor audioMonitor,
+        OverlayForm overlayForm,
+        Action<ClientMode>? onModeChanged = null,
+        Action<string?, string>? onMicrophoneChanged = null,
+        Action<int>? onPortChanged = null,
+        Action<int>? onTimeoutChanged = null)
     {
         _settings = settings;
         _udpListener = udpListener;
+        _audioMonitor = audioMonitor;
         _overlayForm = overlayForm;
+        _onModeChanged = onModeChanged;
+        _onMicrophoneChanged = onMicrophoneChanged;
         _onPortChanged = onPortChanged;
+        _onTimeoutChanged = onTimeoutChanged;
 
         InitializeComponent();
         LoadSettingsIntoControls();
@@ -68,10 +107,27 @@ public sealed class ClientSettingsForm : Form
         ClientSize = new Size(380, 525);
         ShowInTaskbar = true;
 
+        var lblMode = new Label
+        {
+            Text = "Mode:",
+            Location = new Point(20, 10),
+            AutoSize = true
+        };
+
+        _cboMode = new ComboBox
+        {
+            Location = new Point(20, 30),
+            Width = 340,
+            DropDownStyle = ComboBoxStyle.DropDownList
+        };
+        _cboMode.Items.Add("Dual PC");
+        _cboMode.Items.Add("Single PC");
+        _cboMode.SelectedIndexChanged += CboMode_SelectedIndexChanged;
+
         _chkStartup = new CheckBox
         {
             Text = "Run on startup",
-            Location = new Point(20, 20),
+            Location = new Point(20, 60),
             AutoSize = true
         };
         _chkStartup.CheckedChanged += ChkStartup_CheckedChanged;
@@ -79,21 +135,30 @@ public sealed class ClientSettingsForm : Form
         _chkDebugLogging = new CheckBox
         {
             Text = "Enable debug logging",
-            Location = new Point(160, 20),
+            Location = new Point(180, 60),
             AutoSize = true
         };
         _chkDebugLogging.CheckedChanged += ChkDebugLogging_CheckedChanged;
 
-        var lblServer = new Label
+        _lblDualPcNote = new Label
+        {
+            Text = "Run server app on remote PC where your Microphone is plugged in",
+            Location = new Point(20, 85),
+            Width = 340,
+            ForeColor = SystemColors.GrayText,
+            AutoSize = true
+        };
+
+        _lblServer = new Label
         {
             Text = "Server:",
-            Location = new Point(20, 60),
+            Location = new Point(20, 108),
             AutoSize = true
         };
 
         _cboServerIp = new ComboBox
         {
-            Location = new Point(20, 85),
+            Location = new Point(20, 128),
             Width = 340,
             DropDownStyle = ComboBoxStyle.DropDownList,
             DrawMode = DrawMode.OwnerDrawFixed,
@@ -102,37 +167,58 @@ public sealed class ClientSettingsForm : Form
         _cboServerIp.DrawItem += CboServerIp_DrawItem;
         _cboServerIp.SelectedIndexChanged += CboServerIp_SelectedIndexChanged;
 
-        var lblTimeout = new Label
+        _lblPort = new Label
+        {
+            Text = "Port number:",
+            Location = new Point(20, 162),
+            AutoSize = true
+        };
+
+        _txtPort = new TextBox
+        {
+            Location = new Point(20, 184),
+            Width = 100,
+            Text = _settings.Port.ToString()
+        };
+        _txtPort.TextChanged += TxtPort_TextChanged;
+
+        _lblMicrophone = new Label
+        {
+            Text = "Microphone:",
+            Location = new Point(20, 88),
+            AutoSize = true
+        };
+
+        _cboMicrophone = new ComboBox
+        {
+            Location = new Point(20, 110),
+            Width = 340,
+            DropDownStyle = ComboBoxStyle.DropDownList
+        };
+        _micController = new MicrophoneSelectionController(_cboMicrophone, _audioMonitor, item =>
+        {
+            _settings.MicrophoneId = item.Id;
+            _settings.MicrophoneName = item.DisplayName;
+            _settings.Save();
+            _onMicrophoneChanged?.Invoke(item.Id, item.DisplayName);
+        });
+
+        _lblTimeout = new Label
         {
             Text = "Retry timeout (seconds):",
-            Location = new Point(20, 125),
+            Location = new Point(160, 162),
             AutoSize = true
         };
 
         _numTimeout = new NumericUpDown
         {
-            Location = new Point(20, 150),
+            Location = new Point(160, 184),
             Width = 100,
             Minimum = 1,
             Maximum = 300,
             Value = _settings.RetryTimeout
         };
         _numTimeout.ValueChanged += NumTimeout_ValueChanged;
-
-        var lblPort = new Label
-        {
-            Text = "Port number:",
-            Location = new Point(20, 185),
-            AutoSize = true
-        };
-
-        _txtPort = new TextBox
-        {
-            Location = new Point(20, 210),
-            Width = 100,
-            Text = _settings.Port.ToString()
-        };
-        _txtPort.TextChanged += TxtPort_TextChanged;
 
         var lblOpacity = new Label
         {
@@ -239,14 +325,19 @@ public sealed class ClientSettingsForm : Form
             AutoEllipsis = true
         };
 
+        Controls.Add(lblMode);
+        Controls.Add(_cboMode);
         Controls.Add(_chkStartup);
         Controls.Add(_chkDebugLogging);
-        Controls.Add(lblServer);
+        Controls.Add(_lblDualPcNote);
+        Controls.Add(_lblServer);
         Controls.Add(_cboServerIp);
-        Controls.Add(lblTimeout);
-        Controls.Add(_numTimeout);
-        Controls.Add(lblPort);
+        Controls.Add(_lblPort);
         Controls.Add(_txtPort);
+        Controls.Add(_lblMicrophone);
+        Controls.Add(_cboMicrophone);
+        Controls.Add(_lblTimeout);
+        Controls.Add(_numTimeout);
         Controls.Add(lblOpacity);
         Controls.Add(_lblOpacityVal);
         Controls.Add(_trkOpacity);
@@ -263,14 +354,89 @@ public sealed class ClientSettingsForm : Form
 
         _udpListener.DiscoveredServersUpdated += OnDiscoveredServersUpdated;
         _udpListener.TargetServerConnectionChanged += OnTargetServerConnectionChanged;
+        _audioMonitor.DevicesChanged += OnAudioDevicesChanged;
         _cboServerIp.DropDownClosed += (_, _) => PopulateServerIpList();
+    }
+
+    private void ApplyLayoutForMode(ClientMode mode)
+    {
+        bool isSinglePc = mode == ClientMode.SinglePc;
+
+        // Dual PC controls visibility
+        _lblDualPcNote.Visible = !isSinglePc;
+        _lblServer.Visible = !isSinglePc;
+        _cboServerIp.Visible = !isSinglePc;
+        _lblPort.Visible = !isSinglePc;
+        _txtPort.Visible = !isSinglePc;
+
+        // Single PC controls visibility
+        _lblMicrophone.Visible = isSinglePc;
+        _cboMicrophone.Visible = isSinglePc;
+
+        if (isSinglePc)
+        {
+            _lblTimeout.Text = "Microphone reconnect check (seconds):";
+            _lblTimeout.Location = new Point(20, 155);
+            _numTimeout.Location = new Point(20, 178);
+        }
+        else
+        {
+            _lblTimeout.Text = "Retry timeout (seconds):";
+            _lblTimeout.Location = new Point(160, 162);
+            _numTimeout.Location = new Point(160, 184);
+        }
     }
 
     private void LoadSettingsIntoControls()
     {
-        _chkStartup.Checked = StartupRegistryManager.IsStartupEnabled("MicHelperClient");
-        _chkDebugLogging.Checked = _settings.DebugLogging;
-        PopulateServerIpList();
+        _isUpdatingControls = true;
+        try
+        {
+            _chkStartup.Checked = StartupRegistryManager.IsStartupEnabled("MicHelperClient");
+            _chkDebugLogging.Checked = _settings.DebugLogging;
+            _cboMode.SelectedIndex = _settings.Mode == ClientMode.SinglePc ? 1 : 0;
+            _numTimeout.Value = Math.Clamp(_settings.RetryTimeout, 1, 300);
+            _txtPort.Text = _settings.Port.ToString();
+
+            ApplyLayoutForMode(_settings.Mode);
+
+            if (_settings.Mode == ClientMode.SinglePc)
+            {
+                _micController.Populate(_settings.MicrophoneId, _settings.MicrophoneName);
+            }
+            else
+            {
+                PopulateServerIpList();
+            }
+        }
+        finally
+        {
+            _isUpdatingControls = false;
+        }
+    }
+
+    private void CboMode_SelectedIndexChanged(object? sender, EventArgs e)
+    {
+        if (_isUpdatingControls) return;
+
+        var selectedMode = _cboMode.SelectedIndex == 1 ? ClientMode.SinglePc : ClientMode.DualPc;
+        if (_settings.Mode != selectedMode)
+        {
+            _settings.Mode = selectedMode;
+            _settings.Save();
+            ApplyLayoutForMode(selectedMode);
+
+            if (selectedMode == ClientMode.SinglePc)
+            {
+                _micController.Populate(_settings.MicrophoneId, _settings.MicrophoneName);
+            }
+            else
+            {
+                PopulateServerIpList();
+            }
+
+            _onModeChanged?.Invoke(selectedMode);
+        }
     }
 
     private void OnDiscoveredServersUpdated()
@@ -282,7 +448,10 @@ public sealed class ClientSettingsForm : Form
             return;
         }
         if (_cboServerIp.DroppedDown) return;
-        PopulateServerIpList();
+        if (_settings.Mode == ClientMode.DualPc)
+        {
+            PopulateServerIpList();
+        }
     }
 
     private void OnTargetServerConnectionChanged(bool isConnected)
@@ -294,7 +463,25 @@ public sealed class ClientSettingsForm : Form
             return;
         }
         if (_cboServerIp.DroppedDown) return;
-        PopulateServerIpList();
+        if (_settings.Mode == ClientMode.DualPc)
+        {
+            PopulateServerIpList();
+        }
+    }
+
+    private void OnAudioDevicesChanged()
+    {
+        if (IsDisposed || Disposing) return;
+        if (InvokeRequired)
+        {
+            try { BeginInvoke(new Action(OnAudioDevicesChanged)); } catch { }
+            return;
+        }
+        if (_cboMicrophone.DroppedDown) return;
+        if (_settings.Mode == ClientMode.SinglePc)
+        {
+            _micController.Populate(_settings.MicrophoneId, _settings.MicrophoneName);
+        }
     }
 
     private void PopulateServerIpList()
@@ -479,7 +666,7 @@ public sealed class ClientSettingsForm : Form
             {
                 _settings.Port = port;
                 _settings.Save();
-                _onPortChanged(port);
+                _onPortChanged?.Invoke(port);
             }
         }
         else
@@ -495,7 +682,11 @@ public sealed class ClientSettingsForm : Form
         int val = (int)_numTimeout.Value;
         _settings.RetryTimeout = val;
         _settings.Save();
-        _udpListener.SetRetryTimeout(val);
+        if (_settings.Mode == ClientMode.DualPc)
+        {
+            _udpListener.SetRetryTimeout(val);
+        }
+        _onTimeoutChanged?.Invoke(val);
     }
 
     private void TrkOpacity_ValueChanged(object? sender, EventArgs e)
@@ -542,6 +733,7 @@ public sealed class ClientSettingsForm : Form
     {
         _udpListener.DiscoveredServersUpdated -= OnDiscoveredServersUpdated;
         _udpListener.TargetServerConnectionChanged -= OnTargetServerConnectionChanged;
+        _audioMonitor.DevicesChanged -= OnAudioDevicesChanged;
         _overlayForm.OverlayResized -= OnOverlayResized;
         _overlayForm.SetWysiwygMode(false);
         base.OnFormClosed(e);
@@ -553,6 +745,7 @@ public sealed class ClientSettingsForm : Form
         {
             _udpListener.DiscoveredServersUpdated -= OnDiscoveredServersUpdated;
             _udpListener.TargetServerConnectionChanged -= OnTargetServerConnectionChanged;
+            _audioMonitor.DevicesChanged -= OnAudioDevicesChanged;
             _overlayForm.OverlayResized -= OnOverlayResized;
             _overlayForm.SetWysiwygMode(false);
         }
