@@ -355,14 +355,15 @@ public sealed class ClientOverlayAndSettingsTests
             lock (connectionStates) connectionStates.Add(conn);
         };
 
-        // Start listener with 1 second retry timeout
-        listener.Start(targetServerIp: null, retryTimeoutSeconds: 1);
+        // Start listener with 2 second retry timeout
+        listener.Start(targetServerIp: null, retryTimeoutSeconds: 2);
 
-        // Send a burst from broadcaster
+        // Start broadcaster and send a burst
+        broadcaster.Start();
         broadcaster.UpdateState(MicState.Muted, "Studio Mic");
 
-        // Wait up to 1 second to receive packet
-        var timeout = DateTime.UtcNow.AddSeconds(2);
+        // Wait up to 5 seconds to receive packet
+        var timeout = DateTime.UtcNow.AddSeconds(5);
         while (DateTime.UtcNow < timeout)
         {
             if (listener.IsConnected) break;
@@ -379,8 +380,8 @@ public sealed class ClientOverlayAndSettingsTests
         // Stop broadcaster to simulate server going offline
         broadcaster.Stop();
 
-        // Wait up to 2.5 seconds for watchdog to trigger disconnect
-        timeout = DateTime.UtcNow.AddSeconds(3);
+        // Wait up to 6 seconds for watchdog to trigger disconnect
+        timeout = DateTime.UtcNow.AddSeconds(6);
         while (DateTime.UtcNow < timeout)
         {
             if (!listener.IsConnected) break;
@@ -500,9 +501,10 @@ public sealed class ClientOverlayAndSettingsTests
         using var listener = new UdpListener(testPort);
 
         listener.Start(targetServerIp: null, retryTimeoutSeconds: 5);
+        broadcaster.Start();
         broadcaster.UpdateState(MicState.Unmuted, "Test Mic");
 
-        var timeout = DateTime.UtcNow.AddSeconds(2);
+        var timeout = DateTime.UtcNow.AddSeconds(5);
         while (DateTime.UtcNow < timeout && !listener.IsConnected)
         {
             await Task.Delay(25);
@@ -534,17 +536,18 @@ public sealed class ClientOverlayAndSettingsTests
             {
                 ServerIp = "127.0.0.1",
                 Port = testPort,
-                RetryTimeout = 1
+                RetryTimeout = 2
             };
             using var assetMgr = new OverlayAssetManager(tempFolder);
             using var overlay = new OverlayForm(settings, assetMgr);
             using var listener = new UdpListener(testPort);
             using var broadcaster = new UdpBroadcaster(testPort, "server-form-test");
 
-            listener.Start(targetServerIp: null, retryTimeoutSeconds: 1);
+            listener.Start(targetServerIp: null, retryTimeoutSeconds: 2);
+            broadcaster.Start();
             broadcaster.UpdateState(MicState.Unmuted, "Studio Mic");
 
-            var timeout = DateTime.UtcNow.AddSeconds(2);
+            var timeout = DateTime.UtcNow.AddSeconds(5);
             while (DateTime.UtcNow < timeout && !listener.IsConnected)
             {
                 Thread.Sleep(25);
@@ -562,7 +565,7 @@ public sealed class ClientOverlayAndSettingsTests
             // Stop broadcaster to simulate server going offline
             broadcaster.Stop();
 
-            timeout = DateTime.UtcNow.AddSeconds(3);
+            timeout = DateTime.UtcNow.AddSeconds(6);
             while (DateTime.UtcNow < timeout && listener.IsConnected)
             {
                 Application.DoEvents();

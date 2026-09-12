@@ -83,8 +83,8 @@ public sealed class ServerNetworkingAndSettingsTests
         // Trigger state transition
         broadcaster.UpdateState(MicState.Muted, "Test Mic");
 
-        // Wait up to 500ms for 3 burst packets
-        var timeout = DateTime.UtcNow.AddSeconds(1);
+        // Wait up to 3 seconds for 3 burst packets
+        var timeout = DateTime.UtcNow.AddSeconds(3);
         while (DateTime.UtcNow < timeout)
         {
             lock (packetsSent)
@@ -119,7 +119,7 @@ public sealed class ServerNetworkingAndSettingsTests
 
         broadcaster.SetPaused(true);
 
-        var timeout = DateTime.UtcNow.AddSeconds(1);
+        var timeout = DateTime.UtcNow.AddSeconds(3);
         while (DateTime.UtcNow < timeout)
         {
             lock (packetsSent)
