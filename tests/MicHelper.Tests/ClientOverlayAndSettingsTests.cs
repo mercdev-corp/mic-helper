@@ -598,10 +598,110 @@ public sealed class ClientOverlayAndSettingsTests
             Assert.AreEqual(SystemColors.GrayText, form.VersionLabel.ForeColor);
             Assert.IsTrue(form.Controls.Contains(form.VersionLabel));
 
-        // Verify position is between left button (X=20, Width=100) and right button (X=260, Width=100)
+        // Verify position is between left button (X=20, Width=100) and right button (X=300, Width=100)
             Assert.AreEqual(475, form.VersionLabel.Location.Y);
             Assert.IsGreaterThanOrEqualTo(form.VersionLabel.Location.X, 120);
-            Assert.IsLessThanOrEqualTo(form.VersionLabel.Right, 260);
+            Assert.IsLessThanOrEqualTo(form.VersionLabel.Right, 300);
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
+    }
+
+    [TestMethod]
+    public void ClientSettingsForm_Layout_MaintainsMinimum20PxRightMarginAcrossModes()
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "ClientLayoutMarginTest_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            var settings = new ClientSettings
+            {
+                Mode = ClientMode.DualPc,
+                ServerIp = "127.0.0.1",
+                Port = 13998
+            };
+            using var listener = new UdpListener(13998);
+            using var assetMgr = new OverlayAssetManager(tempFolder);
+            using var overlay = new OverlayForm(settings, assetMgr);
+            using var audio = new WindowsAudioMonitor();
+            using var form = new ClientSettingsForm(settings, listener, audio, overlay);
+            _ = form.Handle;
+
+            Assert.AreEqual(420, form.ClientSize.Width);
+
+            // Verify Dual PC mode
+            foreach (Control control in form.Controls)
+            {
+                if (control.Visible)
+                {
+                    Assert.IsLessThanOrEqualTo(
+                        control.Right,
+                        form.ClientSize.Width - 20,
+                        $"Dual PC control '{control.Name}' ({control.GetType().Name}) exceeds 20px right margin. Right={control.Right}");
+                }
+            }
+
+            // Switch to Single PC mode
+            form.ModeComboBox.SelectedIndex = 1;
+            foreach (Control control in form.Controls)
+            {
+                if (control.Visible)
+                {
+                    Assert.IsLessThanOrEqualTo(
+                        control.Right,
+                        form.ClientSize.Width - 20,
+                        $"Single PC control '{control.Name}' ({control.GetType().Name}) exceeds 20px right margin. Right={control.Right}");
+                }
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
+    }
+
+    [TestMethod]
+    public void ClientSettingsForm_DualPcNoteWrapping_DoesNotOverlapServerLabel()
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "ClientDualPcWrapTest_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            var settings = new ClientSettings
+            {
+                Mode = ClientMode.DualPc,
+                ServerIp = "127.0.0.1",
+                Port = 13997
+            };
+            using var listener = new UdpListener(13997);
+            using var assetMgr = new OverlayAssetManager(tempFolder);
+            using var overlay = new OverlayForm(settings, assetMgr);
+            using var audio = new WindowsAudioMonitor();
+            using var form = new ClientSettingsForm(settings, listener, audio, overlay);
+            _ = form.Handle;
+            form.Visible = true;
+
+            // Verify Dual PC note and Server label clearance
+            var dualPcNote = form.DualPcNoteLabel;
+            var serverLabel = form.Controls.OfType<Label>().FirstOrDefault(l => l.Text == "Server:");
+            Assert.IsNotNull(serverLabel);
+            Assert.IsTrue(dualPcNote.Visible);
+            Assert.IsTrue(serverLabel.Visible);
+
+            // Server label must always be positioned below the bottom of the Dual PC guidance note
+            Assert.IsGreaterThanOrEqualTo(dualPcNote.Bottom, serverLabel.Location.Y);
+
+            // Force multi-line text by constraining MaximumSize to narrow width
+            dualPcNote.MaximumSize = new Size(200, 0);
+            form.PerformLayout();
+
+            // Verify that even when multi-line wrapped, Server label never overlaps Dual PC note
+            Assert.IsGreaterThanOrEqualTo(dualPcNote.Bottom, serverLabel.Location.Y);
+            Assert.IsGreaterThanOrEqualTo(serverLabel.Bottom, form.ServerComboBox.Location.Y);
         }
         finally
         {
@@ -812,8 +912,8 @@ public sealed class ClientOverlayAndSettingsTests
             Assert.IsTrue(form.PortTextBox.Visible);
             Assert.IsFalse(form.MicrophoneComboBox.Visible);
             Assert.AreEqual("Retry timeout (seconds):", form.TimeoutLabel.Text);
-            Assert.AreEqual(new Point(160, 162), form.TimeoutLabel.Location);
-            Assert.AreEqual(new Point(160, 184), form.TimeoutNumeric.Location);
+            Assert.AreEqual(new Point(160, 180), form.TimeoutLabel.Location);
+            Assert.AreEqual(new Point(160, 202), form.TimeoutNumeric.Location);
         }
         finally
         {

@@ -167,10 +167,32 @@ public sealed class ServerNetworkingAndSettingsTests
         Assert.AreEqual(SystemColors.GrayText, form.VersionLabel.ForeColor);
         Assert.IsTrue(form.Controls.Contains(form.VersionLabel));
 
-        // Verify position is between left button (X=20, Width=100) and right button (X=280, Width=80) at Y=260
+        // Verify position is between left button (X=20, Width=100) and right button (X=320, Width=80) at Y=260
         Assert.AreEqual(260, form.VersionLabel.Location.Y);
         Assert.IsGreaterThanOrEqualTo(form.VersionLabel.Location.X, 120);
-        Assert.IsLessThanOrEqualTo(form.VersionLabel.Right, 280);
+        Assert.IsLessThanOrEqualTo(form.VersionLabel.Right, 320);
+    }
+
+    [TestMethod]
+    public void ServerSettingsForm_Layout_MaintainsMinimum20PxRightMarginForAllControls()
+    {
+        var settings = new ServerSettings();
+        using var audioMonitor = new WindowsAudioMonitor();
+        using var form = new ServerSettingsForm(settings, audioMonitor, _ => {}, _ => {}, _ => {});
+        _ = form.Handle;
+
+        Assert.AreEqual(420, form.ClientSize.Width);
+
+        foreach (Control control in form.Controls)
+        {
+            if (control.Visible)
+            {
+                Assert.IsLessThanOrEqualTo(
+                    control.Right,
+                    form.ClientSize.Width - 20,
+                    $"Control '{control.Name}' ({control.GetType().Name}) exceeds the 20px right margin constraint. Right={control.Right}, ClientWidth={form.ClientSize.Width}");
+            }
+        }
     }
 
     [TestMethod]
@@ -244,6 +266,96 @@ public sealed class ServerNetworkingAndSettingsTests
         Assert.AreEqual("dev-1", controller.SelectedId);
         Assert.IsNotNull(changedItem);
         Assert.AreEqual("dev-1", changedItem.Id);
+    }
+
+    [TestMethod]
+    public void MicrophoneSelectionController_Populate_DistinctDefaultRoles_BadgesConsoleAndCommsSeparately()
+    {
+        var fakeMonitor = new FakeAudioMonitor
+        {
+            Devices = new List<AudioDeviceInfo>
+            {
+                new("dev-console", "Microphone (Realtek)", IsDefault: true, IsDefaultConsole: true, IsDefaultCommunications: false),
+                new("dev-comms", "Wave Cast", IsDefault: false, IsDefaultConsole: false, IsDefaultCommunications: true),
+                new("dev-aux", "Line In", IsDefault: false, IsDefaultConsole: false, IsDefaultCommunications: false)
+            }
+        };
+
+        using var cbo = new ComboBox();
+        var controller = new MicrophoneSelectionController(cbo, fakeMonitor);
+
+        controller.Populate(null, null);
+
+        Assert.AreEqual(3, cbo.Items.Count);
+        var item0 = (MicComboItem?)cbo.Items[0];
+        var item1 = (MicComboItem?)cbo.Items[1];
+        var item2 = (MicComboItem?)cbo.Items[2];
+        Assert.IsNotNull(item0);
+        Assert.IsNotNull(item1);
+        Assert.IsNotNull(item2);
+
+        Assert.AreEqual("dev-console", item0.Id);
+        Assert.AreEqual("Microphone (Realtek) (Default)", item0.DisplayName);
+
+        Assert.AreEqual("dev-comms", item1.Id);
+        Assert.AreEqual("Wave Cast (Default Communications)", item1.DisplayName);
+
+        Assert.AreEqual("dev-aux", item2.Id);
+        Assert.AreEqual("Line In", item2.DisplayName);
+    }
+
+    [TestMethod]
+    public void MicrophoneSelectionController_Populate_SameDeviceBothRoles_BadgesOnlyDefault()
+    {
+        var fakeMonitor = new FakeAudioMonitor
+        {
+            Devices = new List<AudioDeviceInfo>
+            {
+                new("dev-primary", "HyperX QuadCast", IsDefault: true, IsDefaultConsole: true, IsDefaultCommunications: true),
+                new("dev-secondary", "Aux Mic", IsDefault: false, IsDefaultConsole: false, IsDefaultCommunications: false)
+            }
+        };
+
+        using var cbo = new ComboBox();
+        var controller = new MicrophoneSelectionController(cbo, fakeMonitor);
+
+        controller.Populate(null, null);
+
+        Assert.AreEqual(2, cbo.Items.Count);
+        var item0 = (MicComboItem?)cbo.Items[0];
+        var item1 = (MicComboItem?)cbo.Items[1];
+        Assert.IsNotNull(item0);
+        Assert.IsNotNull(item1);
+
+        Assert.AreEqual("dev-primary", item0.Id);
+        Assert.AreEqual("HyperX QuadCast (Default)", item0.DisplayName);
+
+        Assert.AreEqual("dev-secondary", item1.Id);
+        Assert.AreEqual("Aux Mic", item1.DisplayName);
+    }
+
+    [TestMethod]
+    public void MicrophoneSelectionController_GetDeviceBadge_ReturnsExpectedBadges()
+    {
+        // Console default
+        var consoleDev = new AudioDeviceInfo("c", "Console", IsDefault: true, IsDefaultConsole: true, IsDefaultCommunications: false);
+        Assert.AreEqual(" (Default)", MicrophoneSelectionController.GetDeviceBadge(consoleDev));
+
+        // Both roles
+        var bothDev = new AudioDeviceInfo("b", "Both", IsDefault: true, IsDefaultConsole: true, IsDefaultCommunications: true);
+        Assert.AreEqual(" (Default)", MicrophoneSelectionController.GetDeviceBadge(bothDev));
+
+        // Comms default distinct
+        var commsDev = new AudioDeviceInfo("cm", "Comms", IsDefault: false, IsDefaultConsole: false, IsDefaultCommunications: true);
+        Assert.AreEqual(" (Default Communications)", MicrophoneSelectionController.GetDeviceBadge(commsDev));
+
+        // Neither
+        var plainDev = new AudioDeviceInfo("p", "Plain", IsDefault: false, IsDefaultConsole: false, IsDefaultCommunications: false);
+        Assert.AreEqual("", MicrophoneSelectionController.GetDeviceBadge(plainDev));
+
+        // Legacy IsDefault=true
+        var legacyDev = new AudioDeviceInfo("l", "Legacy", IsDefault: true, IsDefaultConsole: false, IsDefaultCommunications: false);
+        Assert.AreEqual(" (Default)", MicrophoneSelectionController.GetDeviceBadge(legacyDev));
     }
 
     private sealed class FakeAudioMonitor : IAudioMonitor

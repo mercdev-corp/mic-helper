@@ -32,11 +32,11 @@ The server audio monitor SHALL monitor device state notifications to detect when
 - **THEN** the audio monitor re-establishes volume change callbacks, reads current mute status, and resumes active status reporting
 
 ### Requirement: Default Device Fallback and Saved Selection Preservation
-The server audio monitor SHALL default to the system default communication/capture device when no configuration exists, and preserve a missing saved device in settings when it is temporarily unplugged.
+The server audio monitor SHALL resolve the system default capture endpoint by prioritizing the standard general/console default device (`ERole.eConsole`), falling back to the default communication endpoint (`ERole.eCommunications`) or multimedia endpoint (`ERole.eMultimedia`) only when a general console default is unavailable, and preserve a missing saved device in settings when it is temporarily unplugged.
 
 #### Scenario: First application launch
 - **WHEN** the server starts with no configured microphone in settings
-- **THEN** the system resolves the current Windows default capture device, binds to it, and saves its identity in settings
+- **THEN** the system resolves the Windows default console capture device (`ERole.eConsole`), binds to it, saves its identity in settings, and falls back to `ERole.eCommunications` or `ERole.eMultimedia` if console is unavailable
 
 #### Scenario: Configured microphone not found on startup
 - **WHEN** the server launches but the microphone specified in settings is not attached

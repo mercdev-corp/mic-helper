@@ -60,7 +60,7 @@ public sealed class MicrophoneSelectionController
             // Add currently connected devices
             foreach (var dev in activeDevices)
             {
-                var item = new MicComboItem(dev.Id, dev.Name + (dev.IsDefault ? " (Default)" : ""), IsMissing: false);
+                var item = new MicComboItem(dev.Id, dev.Name + GetDeviceBadge(dev), IsMissing: false);
                 _comboBox.Items.Add(item);
 
                 if (savedFound && string.Equals(dev.Id, savedId, StringComparison.OrdinalIgnoreCase))
@@ -116,5 +116,27 @@ public sealed class MicrophoneSelectionController
         }
 
         e.DrawFocusRectangle();
+    }
+
+    public static string GetDeviceBadge(AudioDeviceInfo dev)
+    {
+        bool isConsoleDefault = dev.IsDefaultConsole || (dev.IsDefault && !dev.IsDefaultCommunications);
+
+        if (isConsoleDefault)
+        {
+            return " (Default)";
+        }
+
+        if (dev.IsDefaultCommunications)
+        {
+            return " (Default Communications)";
+        }
+
+        if (dev.IsDefault)
+        {
+            return " (Default)";
+        }
+
+        return "";
     }
 }
