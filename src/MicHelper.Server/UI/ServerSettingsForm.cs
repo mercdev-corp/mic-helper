@@ -90,7 +90,7 @@ public sealed class ServerSettingsForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(380, 310);
+        ClientSize = new Size(420, 310);
         ShowInTaskbar = true;
 
         _toolTip = new ToolTip();
@@ -121,7 +121,7 @@ public sealed class ServerSettingsForm : Form
         _cboMicrophone = new ComboBox
         {
             Location = new Point(20, 85),
-            Width = 340,
+            Width = 380,
             DropDownStyle = ComboBoxStyle.DropDownList
         };
         _micController = new MicrophoneSelectionController(_cboMicrophone, _audioMonitor, item =>
@@ -176,7 +176,7 @@ public sealed class ServerSettingsForm : Form
         _btnClose = new Button
         {
             Text = "Close",
-            Location = new Point(280, 260),
+            Location = new Point(320, 260),
             Width = 80,
             Height = 30
         };
@@ -186,7 +186,7 @@ public sealed class ServerSettingsForm : Form
         {
             Text = AppVersion.DisplayVersion,
             Location = new Point(120, 260),
-            Size = new Size(160, 30),
+            Size = new Size(200, 30),
             TextAlign = ContentAlignment.MiddleCenter,
             ForeColor = SystemColors.GrayText,
             AutoEllipsis = true

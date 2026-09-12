@@ -104,7 +104,7 @@ public sealed class ClientSettingsForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(380, 525);
+        ClientSize = new Size(420, 525);
         ShowInTaskbar = true;
 
         var lblMode = new Label
@@ -117,7 +117,7 @@ public sealed class ClientSettingsForm : Form
         _cboMode = new ComboBox
         {
             Location = new Point(20, 30),
-            Width = 340,
+            Width = 380,
             DropDownStyle = ComboBoxStyle.DropDownList
         };
         _cboMode.Items.Add("Dual PC");
@@ -144,7 +144,7 @@ public sealed class ClientSettingsForm : Form
         {
             Text = "Run server app on remote PC where your Microphone is plugged in",
             Location = new Point(20, 85),
-            Width = 340,
+            MaximumSize = new Size(380, 0),
             ForeColor = SystemColors.GrayText,
             AutoSize = true
         };
@@ -152,14 +152,14 @@ public sealed class ClientSettingsForm : Form
         _lblServer = new Label
         {
             Text = "Server:",
-            Location = new Point(20, 108),
+            Location = new Point(20, 126),
             AutoSize = true
         };
 
         _cboServerIp = new ComboBox
         {
-            Location = new Point(20, 128),
-            Width = 340,
+            Location = new Point(20, 148),
+            Width = 380,
             DropDownStyle = ComboBoxStyle.DropDownList,
             DrawMode = DrawMode.OwnerDrawFixed,
             ItemHeight = 22
@@ -170,13 +170,13 @@ public sealed class ClientSettingsForm : Form
         _lblPort = new Label
         {
             Text = "Port number:",
-            Location = new Point(20, 162),
+            Location = new Point(20, 180),
             AutoSize = true
         };
 
         _txtPort = new TextBox
         {
-            Location = new Point(20, 184),
+            Location = new Point(20, 202),
             Width = 100,
             Text = _settings.Port.ToString()
         };
@@ -192,7 +192,7 @@ public sealed class ClientSettingsForm : Form
         _cboMicrophone = new ComboBox
         {
             Location = new Point(20, 110),
-            Width = 340,
+            Width = 380,
             DropDownStyle = ComboBoxStyle.DropDownList
         };
         _micController = new MicrophoneSelectionController(_cboMicrophone, _audioMonitor, item =>
@@ -206,13 +206,13 @@ public sealed class ClientSettingsForm : Form
         _lblTimeout = new Label
         {
             Text = "Retry timeout (seconds):",
-            Location = new Point(160, 162),
+            Location = new Point(160, 180),
             AutoSize = true
         };
 
         _numTimeout = new NumericUpDown
         {
-            Location = new Point(160, 184),
+            Location = new Point(160, 202),
             Width = 100,
             Minimum = 1,
             Maximum = 300,
@@ -235,7 +235,7 @@ public sealed class ClientSettingsForm : Form
         _trkOpacity = new TrackBar
         {
             Location = new Point(20, 265),
-            Width = 340,
+            Width = 380,
             Minimum = 0,
             Maximum = 100,
             TickFrequency = 10,
@@ -258,7 +258,7 @@ public sealed class ClientSettingsForm : Form
         _trkFrequency = new TrackBar
         {
             Location = new Point(20, 330),
-            Width = 340,
+            Width = 380,
             Minimum = 1, // 0.1s
             Maximum = 50, // 5.0s
             TickFrequency = 5,
@@ -281,7 +281,7 @@ public sealed class ClientSettingsForm : Form
         _trkSize = new TrackBar
         {
             Location = new Point(20, 395),
-            Width = 340,
+            Width = 380,
             Minimum = 32,
             Maximum = 1024,
             TickFrequency = 64,
@@ -293,6 +293,7 @@ public sealed class ClientSettingsForm : Form
         {
             Text = "Drag overlay to move • Scroll mouse wheel or drag corners to resize.",
             Location = new Point(20, 440),
+            MaximumSize = new Size(380, 0),
             ForeColor = Color.Gray,
             AutoSize = true
         };
@@ -309,7 +310,7 @@ public sealed class ClientSettingsForm : Form
         _btnClose = new Button
         {
             Text = "Close",
-            Location = new Point(260, 475),
+            Location = new Point(300, 475),
             Width = 100,
             Height = 30
         };
@@ -319,7 +320,7 @@ public sealed class ClientSettingsForm : Form
         {
             Text = AppVersion.DisplayVersion,
             Location = new Point(120, 475),
-            Size = new Size(140, 30),
+            Size = new Size(180, 30),
             TextAlign = ContentAlignment.MiddleCenter,
             ForeColor = SystemColors.GrayText,
             AutoEllipsis = true
@@ -358,6 +359,15 @@ public sealed class ClientSettingsForm : Form
         _cboServerIp.DropDownClosed += (_, _) => PopulateServerIpList();
     }
 
+    protected override void OnLayout(LayoutEventArgs levent)
+    {
+        base.OnLayout(levent);
+        if (_lblDualPcNote != null && _lblServer != null && _settings != null)
+        {
+            ApplyLayoutForMode(_settings.Mode);
+        }
+    }
+
     private void ApplyLayoutForMode(ClientMode mode)
     {
         bool isSinglePc = mode == ClientMode.SinglePc;
@@ -381,9 +391,19 @@ public sealed class ClientSettingsForm : Form
         }
         else
         {
+            int noteHeight = _lblDualPcNote.GetPreferredSize(new Size(_lblDualPcNote.MaximumSize.Width, 0)).Height;
+            int effectiveNoteBottom = _lblDualPcNote.Location.Y + Math.Max(_lblDualPcNote.Height, noteHeight);
+            int serverY = Math.Max(126, effectiveNoteBottom + 4);
+            int deltaY = serverY - 126;
+
+            _lblServer.Location = new Point(20, serverY);
+            _cboServerIp.Location = new Point(20, 148 + deltaY);
+            _lblPort.Location = new Point(20, 180 + deltaY);
+            _txtPort.Location = new Point(20, 202 + deltaY);
+
             _lblTimeout.Text = "Retry timeout (seconds):";
-            _lblTimeout.Location = new Point(160, 162);
-            _numTimeout.Location = new Point(160, 184);
+            _lblTimeout.Location = new Point(160, 180 + deltaY);
+            _numTimeout.Location = new Point(160, 202 + deltaY);
         }
     }
 

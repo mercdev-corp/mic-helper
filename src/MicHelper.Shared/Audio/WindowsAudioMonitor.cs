@@ -100,7 +100,39 @@ public sealed class WindowsAudioMonitor : IAudioMonitor, IAudioEndpointVolumeCal
             var list = new List<AudioDeviceInfo>();
             if (_deviceEnumerator == null) return list;
 
-            var defaultId = GetDefaultCaptureDevice()?.Id;
+            string? defaultConsoleId = null;
+            if (_deviceEnumerator.GetDefaultAudioEndpoint(EDataFlow.eCapture, ERole.eConsole, out var consoleDev) == 0 && consoleDev != null)
+            {
+                try
+                {
+                    consoleDev.GetId(out var cId);
+                    defaultConsoleId = cId;
+                }
+                finally
+                {
+                    Marshal.ReleaseComObject(consoleDev);
+                }
+            }
+
+            string? defaultCommunicationsId = null;
+            if (_deviceEnumerator.GetDefaultAudioEndpoint(EDataFlow.eCapture, ERole.eCommunications, out var commsDev) == 0 && commsDev != null)
+            {
+                try
+                {
+                    commsDev.GetId(out var cmId);
+                    defaultCommunicationsId = cmId;
+                }
+                finally
+                {
+                    Marshal.ReleaseComObject(commsDev);
+                }
+            }
+
+            var primaryDefaultId = defaultConsoleId ?? defaultCommunicationsId;
+            if (primaryDefaultId == null)
+            {
+                primaryDefaultId = GetDefaultCaptureDevice()?.Id;
+            }
 
             int hr = _deviceEnumerator.EnumAudioEndpoints(EDataFlow.eCapture, CoreAudioConstants.DEVICE_STATE_ACTIVE, out var collection);
             if (hr != 0 || collection == null) return list;
@@ -114,8 +146,10 @@ public sealed class WindowsAudioMonitor : IAudioMonitor, IAudioEndpointVolumeCal
                     {
                         device.GetId(out string id);
                         string name = GetFriendlyName(device) ?? id;
-                        bool isDef = string.Equals(id, defaultId, StringComparison.OrdinalIgnoreCase);
-                        list.Add(new AudioDeviceInfo(id, name, isDef));
+                        bool isDefConsole = string.Equals(id, defaultConsoleId, StringComparison.OrdinalIgnoreCase);
+                        bool isDefComms = string.Equals(id, defaultCommunicationsId, StringComparison.OrdinalIgnoreCase);
+                        bool isDef = string.Equals(id, primaryDefaultId, StringComparison.OrdinalIgnoreCase);
+                        list.Add(new AudioDeviceInfo(id, name, isDef, isDefConsole, isDefComms));
                     }
                     finally
                     {
@@ -135,10 +169,26 @@ public sealed class WindowsAudioMonitor : IAudioMonitor, IAudioEndpointVolumeCal
         {
             if (_deviceEnumerator == null) return null;
 
-            int hr = _deviceEnumerator.GetDefaultAudioEndpoint(EDataFlow.eCapture, ERole.eCommunications, out var device);
+            bool isConsole = false;
+            bool isComms = false;
+
+            int hr = _deviceEnumerator.GetDefaultAudioEndpoint(EDataFlow.eCapture, ERole.eConsole, out var device);
+            if (hr == 0 && device != null)
+            {
+                isConsole = true;
+            }
+            else
+            {
+                hr = _deviceEnumerator.GetDefaultAudioEndpoint(EDataFlow.eCapture, ERole.eCommunications, out device);
+                if (hr == 0 && device != null)
+                {
+                    isComms = true;
+                }
+            }
+
             if (hr != 0 || device == null)
             {
-                hr = _deviceEnumerator.GetDefaultAudioEndpoint(EDataFlow.eCapture, ERole.eConsole, out device);
+                hr = _deviceEnumerator.GetDefaultAudioEndpoint(EDataFlow.eCapture, ERole.eMultimedia, out device);
             }
 
             if (hr != 0 || device == null) return null;
@@ -147,7 +197,7 @@ public sealed class WindowsAudioMonitor : IAudioMonitor, IAudioEndpointVolumeCal
             {
                 device.GetId(out string id);
                 string name = GetFriendlyName(device) ?? id;
-                return new AudioDeviceInfo(id, name, true);
+                return new AudioDeviceInfo(id, name, IsDefault: true, IsDefaultConsole: isConsole, IsDefaultCommunications: isComms);
             }
             finally
             {

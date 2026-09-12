@@ -6,6 +6,7 @@ namespace MicHelper.Tests;
 [TestClass]
 public sealed class AudioMonitorTests
 {
+
     [TestMethod]
     public void WindowsAudioMonitor_Instantiation_SucceedsOnWindows()
     {
@@ -102,6 +103,45 @@ public sealed class AudioMonitorTests
 
         var notifyClient = (IMMNotificationClient)monitor;
         int hr = notifyClient.OnDefaultDeviceChanged(EDataFlow.eCapture, ERole.eCommunications, "new-default-device-id");
+
+        Assert.AreEqual(0, hr);
+
+        var timeout = DateTime.UtcNow.AddSeconds(2);
+        while (DateTime.UtcNow < timeout && !devicesChangedFired)
+        {
+            await Task.Delay(25);
+        }
+
+        Assert.IsTrue(devicesChangedFired);
+    }
+
+    [TestMethod]
+    public void AudioDeviceInfo_ExtendedProperties_SetCorrectly()
+    {
+        var info = new AudioDeviceInfo("id-123", "Test Mic", IsDefault: true, IsDefaultConsole: true, IsDefaultCommunications: false);
+        Assert.AreEqual("id-123", info.Id);
+        Assert.AreEqual("Test Mic", info.Name);
+        Assert.IsTrue(info.IsDefault);
+        Assert.IsTrue(info.IsDefaultConsole);
+        Assert.IsFalse(info.IsDefaultCommunications);
+
+        var commsInfo = new AudioDeviceInfo("id-456", "Comms Mic", IsDefault: false, IsDefaultConsole: false, IsDefaultCommunications: true);
+        Assert.IsFalse(commsInfo.IsDefault);
+        Assert.IsFalse(commsInfo.IsDefaultConsole);
+        Assert.IsTrue(commsInfo.IsDefaultCommunications);
+    }
+
+    [TestMethod]
+    public async Task WindowsAudioMonitor_DefaultDeviceChanged_ConsoleRole_DoesNotDeadlockAndTriggersDevicesChanged()
+    {
+        using var monitor = new WindowsAudioMonitor();
+        monitor.StartMonitoring(targetDeviceId: null, retryTimeoutSeconds: 1);
+
+        bool devicesChangedFired = false;
+        monitor.DevicesChanged += () => devicesChangedFired = true;
+
+        var notifyClient = (IMMNotificationClient)monitor;
+        int hr = notifyClient.OnDefaultDeviceChanged(EDataFlow.eCapture, ERole.eConsole, "new-console-default-device-id");
 
         Assert.AreEqual(0, hr);
 

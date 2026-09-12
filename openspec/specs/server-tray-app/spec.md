@@ -48,7 +48,7 @@ The server application SHALL store all configuration settings in `mic-helper-ser
 - **THEN** each server reads and writes exclusively to its own folder's `mic-helper-server-settings.json` without cross-instance interference
 
 ### Requirement: Microphone Selection with Missing Device Indication
-The settings dialog SHALL provide a dropdown list of available microphones, defaulting to the system default on first run, and rendering a missing configured microphone in red strikethrough text.
+The settings dialog SHALL provide a dropdown list of available microphones, defaulting to the system default on first run, rendering distinct badges for general default and communications default devices when they differ, and rendering a missing configured microphone in red strikethrough text.
 
 #### Scenario: Configured microphone missing in dropdown
 - **WHEN** the settings dialog opens and the currently saved microphone is not present on the host
@@ -57,6 +57,10 @@ The settings dialog SHALL provide a dropdown list of available microphones, defa
 #### Scenario: Missing microphone persists unless changed
 - **WHEN** the settings dialog is closed without selecting a different microphone
 - **THEN** the missing microphone remains preserved in `mic-helper-server-settings.json`
+
+#### Scenario: Distinct default device indication
+- **WHEN** the system has distinct default console and communications capture devices
+- **THEN** the dropdown indicates the primary console default microphone with `(Default)` and the communications default microphone with `(Default Communications)`
 
 ### Requirement: Port Number Configuration and In-Use Collision Detection
 The settings dialog SHALL allow configuring the broadcast port (default 13205) and detect if the specified port is already bound by another process or another server instance.
@@ -101,4 +105,11 @@ The server settings dialog SHALL display the application version embedded during
 #### Scenario: Display current version in server settings
 - **WHEN** the user opens the server settings dialog
 - **THEN** the application version (e.g., `v0.1.0`) is displayed centered between the "View Logs..." and "Close" buttons, reflecting the version value defined at build time from the repository `VERSION` file.
+
+### Requirement: Server Settings Dialog Layout and Margin Guarantees
+The server settings dialog SHALL maintain a consistent minimum right margin of 20 pixels for all controls, labels, and text elements, preventing any text or input controls from clipping or extending flush against the right window boundary across standard and high-DPI scaling.
+
+#### Scenario: Server settings controls layout padding
+- **WHEN** the server settings dialog is opened
+- **THEN** all controls, buttons, and descriptive labels maintain at least 20 pixels of clearance from the right edge of the window
 

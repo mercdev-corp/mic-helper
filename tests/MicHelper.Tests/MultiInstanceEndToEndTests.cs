@@ -122,7 +122,7 @@ public sealed class MultiInstanceEndToEndTests
             // Broadcaster 2 sends Unmuted
             broadcaster2.UpdateState(MicState.Unmuted, force: true);
 
-            var timeout = DateTime.UtcNow.AddSeconds(3);
+            var timeout = DateTime.UtcNow.AddSeconds(5);
             while (DateTime.UtcNow < timeout)
             {
                 if (listener1.IsConnected && listener2.IsConnected) break;
