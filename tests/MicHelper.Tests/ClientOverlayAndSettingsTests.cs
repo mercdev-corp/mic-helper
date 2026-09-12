@@ -1021,6 +1021,112 @@ public sealed class ClientOverlayAndSettingsTests
         }
     }
 
+    [TestMethod]
+    public void ClientSettingsForm_SwitchFromSinglePcToDualPc_ActivatesUdpListenerAndDeactivatesAudioMonitor()
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "ClientSwitchFormTest_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            var settings = new ClientSettings
+            {
+                Mode = ClientMode.SinglePc,
+                ServerIp = "127.0.0.1",
+                Port = 13988,
+                MicrophoneId = "mic-test-123",
+                RetryTimeout = 4
+            };
+            settings.Save(tempFolder);
+
+            var mockAudio = new MockAudioMonitor();
+            using var listener = new UdpListener(13988);
+            using var assetMgr = new OverlayAssetManager(tempFolder);
+            using var overlay = new OverlayForm(settings, assetMgr);
+            using var context = new ClientTrayApplicationContext(settings, listener, mockAudio, assetMgr, overlay);
+
+            // Initially Single PC mode
+            Assert.IsTrue(mockAudio.IsMonitoring, "Audio monitor must be active on Single PC startup");
+            Assert.IsTrue(listener.IsPaused, "UDP listener must be paused on Single PC startup");
+            Assert.AreEqual(ClientMode.SinglePc, context.ActiveMode);
+            Assert.AreEqual(ClientMode.SinglePc, settings.Mode);
+
+            // Open ClientSettingsForm wired to context.SwitchMode
+            using var form = new ClientSettingsForm(
+                settings,
+                listener,
+                mockAudio,
+                overlay,
+                onModeChanged: newMode => context.SwitchMode(newMode));
+            _ = form.Handle;
+            form.Visible = true;
+
+            // Switch from Single PC to Dual PC mode via dropdown (index 0 is Dual PC)
+            form.ModeComboBox.SelectedIndex = 0;
+            Application.DoEvents();
+
+            // Verify mode transitioned immediately
+            Assert.AreEqual(ClientMode.DualPc, context.ActiveMode, "Context ActiveMode must transition to Dual PC");
+            Assert.AreEqual(ClientMode.DualPc, settings.Mode, "Settings Mode must be Dual PC");
+            Assert.IsFalse(mockAudio.IsMonitoring, "Audio monitor must be deactivated when switching to Dual PC mode via settings form");
+            Assert.IsFalse(listener.IsPaused, "UDP listener must be active when switching to Dual PC mode via settings form without pause/resume");
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
+    }
+
+    [TestMethod]
+    public async Task UdpListener_Stop_ClearsIsConnectedAndDispatchesDisconnectNotification()
+    {
+        int testPort = 13298;
+        using var broadcaster = new UdpBroadcaster(testPort, "server-stop-test");
+        using var listener = new UdpListener(testPort);
+
+        bool disconnectNotified = false;
+        listener.TargetServerConnectionChanged += connected =>
+        {
+            if (!connected) disconnectNotified = true;
+        };
+
+        listener.Start(targetServerIp: null, retryTimeoutSeconds: 5);
+        broadcaster.Start();
+        broadcaster.UpdateState(MicState.Unmuted, "Test Mic");
+
+        var timeout = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < timeout && !listener.IsConnected)
+        {
+            await Task.Delay(25);
+        }
+
+        Assert.IsTrue(listener.IsConnected, "Listener should be connected after receiving broadcast");
+        Assert.AreEqual(MicState.Unmuted, listener.LastReportedState);
+
+        // Stop the listener
+        listener.Stop();
+
+        Assert.IsFalse(listener.IsConnected, "UdpListener.Stop() must clear IsConnected to false");
+        Assert.AreEqual(MicState.Disconnected, listener.LastReportedState, "UdpListener.Stop() must reset LastReportedState to Disconnected");
+        Assert.IsTrue(disconnectNotified, "UdpListener.Stop() must dispatch TargetServerConnectionChanged(false) when previously connected");
+
+        // Restart listener and verify consistent disconnected state until packet arrival
+        listener.Start(targetServerIp: null, retryTimeoutSeconds: 5);
+        Assert.IsFalse(listener.IsConnected, "UdpListener.Start() must reset connection state until new packets arrive");
+
+        // Broadcast new packet and verify reconnection
+        broadcaster.UpdateState(MicState.Muted, "Test Mic");
+
+        timeout = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < timeout && (!listener.IsConnected || listener.LastReportedState != MicState.Muted))
+        {
+            await Task.Delay(25);
+        }
+
+        Assert.IsTrue(listener.IsConnected, "UdpListener must successfully reconnect upon receiving packets after restart");
+        Assert.AreEqual(MicState.Muted, listener.LastReportedState);
+    }
+
     private sealed class MockAudioMonitor : IAudioMonitor
     {
         public bool IsMonitoring { get; private set; }

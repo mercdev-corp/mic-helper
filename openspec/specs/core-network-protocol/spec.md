@@ -46,6 +46,10 @@ The client SHALL monitor the elapsed time since the last valid status or heartbe
 - **WHEN** a valid packet is received from the target server IP while in a disconnected state
 - **THEN** the client immediately clears the disconnected status and applies the received microphone state
 
+#### Scenario: Listener stopped clears connection state
+- **WHEN** the client stops the UDP listener
+- **THEN** the listener immediately resets its connection state to disconnected so that subsequent activations detect incoming server connections freshly
+
 ### Requirement: Server Pause and Disconnect Notification
 The server SHALL transmit explicit state transition packets prior to entering paused state or dropping client connections.
 

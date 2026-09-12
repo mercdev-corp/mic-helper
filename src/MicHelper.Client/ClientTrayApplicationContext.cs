@@ -26,6 +26,7 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
 
     private readonly SynchronizationContext _syncContext;
     private ClientSettingsForm? _settingsForm;
+    private ClientMode _activeMode;
 
     public ClientTrayApplicationContext() : this(null, null, null, null, null)
     {
@@ -44,6 +45,7 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
         _overlayForm = overlayForm ?? new OverlayForm(_settings, _assetManager);
         _udpListener = udpListener ?? new UdpListener(_settings.Port);
         _audioMonitor = audioMonitor ?? new WindowsAudioMonitor();
+        _activeMode = _settings.Mode;
 
         // Build Tray Menu
         _contextMenu = new ContextMenuStrip();
@@ -82,7 +84,7 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
             _overlayForm.SetLiveState(MicState.Paused, isPaused: true);
             UpdateStatus(MicState.Paused);
         }
-        else if (_settings.Mode == ClientMode.SinglePc)
+        else if (_activeMode == ClientMode.SinglePc)
         {
             _udpListener.Stop();
             _audioMonitor.StartMonitoring(_settings.MicrophoneId, _settings.RetryTimeout);
@@ -98,6 +100,7 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
     }
 
     internal ClientSettings Settings => _settings;
+    internal ClientMode ActiveMode => _activeMode;
     internal UdpListener UdpListener => _udpListener;
     internal IAudioMonitor AudioMonitor => _audioMonitor;
     internal OverlayForm OverlayForm => _overlayForm;
@@ -119,8 +122,9 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
     {
         PostToUiThread(() =>
         {
-            if (_settings.Mode == newMode) return;
+            if (_activeMode == newMode && _settings.Mode == newMode) return;
 
+            _activeMode = newMode;
             _settings.Mode = newMode;
             _settings.Save();
 
@@ -157,7 +161,7 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
             _settings.MicrophoneName = micName;
             _settings.Save();
 
-            if (_settings.Mode == ClientMode.SinglePc && !_settings.IsPaused)
+            if (_activeMode == ClientMode.SinglePc && !_settings.IsPaused)
             {
                 _audioMonitor.StartMonitoring(micId, _settings.RetryTimeout);
                 UpdateAudioState();
@@ -174,7 +178,7 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
 
             if (!_settings.IsPaused)
             {
-                if (_settings.Mode == ClientMode.SinglePc)
+                if (_activeMode == ClientMode.SinglePc)
                 {
                     _audioMonitor.StartMonitoring(_settings.MicrophoneId, timeout);
                 }
@@ -188,7 +192,7 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
 
     private void UpdateAudioState()
     {
-        if (_settings.Mode != ClientMode.SinglePc)
+        if (_activeMode != ClientMode.SinglePc)
         {
             return;
         }
@@ -231,7 +235,7 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
     {
         PostToUiThread(() =>
         {
-            if (_settings.Mode == ClientMode.DualPc && !_settings.IsPaused)
+            if (_activeMode == ClientMode.DualPc && !_settings.IsPaused)
             {
                 _overlayForm.SetLiveState(state, isPaused: false);
                 UpdateStatus(state);
@@ -243,7 +247,7 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
     {
         PostToUiThread(() =>
         {
-            if (_settings.Mode == ClientMode.DualPc && !_settings.IsPaused)
+            if (_activeMode == ClientMode.DualPc && !_settings.IsPaused)
             {
                 var state = isConnected ? _udpListener.LastReportedState : MicState.Disconnected;
                 _overlayForm.SetLiveState(state, isPaused: false);
@@ -256,7 +260,7 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
     {
         try
         {
-            bool isSinglePc = _settings.Mode == ClientMode.SinglePc;
+            bool isSinglePc = _activeMode == ClientMode.SinglePc;
             using var icon = StatusIconGenerator.CreateStatusIcon(state, isServer: isSinglePc);
             var oldIcon = _trayIcon.Icon;
             _trayIcon.Icon = (Icon)icon.Clone();
@@ -305,7 +309,7 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
         }
         else
         {
-            if (_settings.Mode == ClientMode.SinglePc)
+            if (_activeMode == ClientMode.SinglePc)
             {
                 _audioMonitor.StartMonitoring(_settings.MicrophoneId, _settings.RetryTimeout);
                 UpdateAudioState();
@@ -337,7 +341,7 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
                 onMicrophoneChanged: (micId, micName) => SetMicrophone(micId, micName),
                 onPortChanged: newPort =>
                 {
-                    if (_settings.Mode == ClientMode.DualPc)
+                    if (_activeMode == ClientMode.DualPc)
                     {
                         _udpListener.Rebind(newPort, _settings.ServerIp);
                     }
