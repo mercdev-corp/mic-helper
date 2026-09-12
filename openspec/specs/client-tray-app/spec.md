@@ -134,7 +134,7 @@ The client application SHALL provide an option to switch between "Dual PC" and "
 
 #### Scenario: Switch from Single PC to Dual PC mode
 - **WHEN** the user selects "Dual PC" mode in the settings dialog
-- **THEN** the client immediately transitions to Dual PC mode, saves the active mode in settings, stops local audio capture monitoring, and activates UDP network listening using the saved server and port settings
+- **THEN** the client immediately transitions to Dual PC mode, saves the active mode in settings, stops local audio capture monitoring, activates UDP network listening using the saved server and port settings, and dynamically updates server status without requiring an application pause/resume cycle
 
 #### Scenario: Startup restores active mode
 - **WHEN** the client application launches

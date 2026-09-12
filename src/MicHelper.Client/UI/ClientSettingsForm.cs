@@ -444,6 +444,9 @@ public sealed class ClientSettingsForm : Form
         {
             _settings.Mode = selectedMode;
             _settings.Save();
+
+            _onModeChanged?.Invoke(selectedMode);
+
             ApplyLayoutForMode(selectedMode);
 
             if (selectedMode == ClientMode.SinglePc)
@@ -454,8 +457,6 @@ public sealed class ClientSettingsForm : Form
             {
                 PopulateServerIpList();
             }
-
-            _onModeChanged?.Invoke(selectedMode);
         }
     }
 

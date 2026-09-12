@@ -68,7 +68,11 @@ public sealed class UdpListener : IDisposable
             _targetServerIp = targetServerIp;
             _retryTimeoutSeconds = Math.Max(1, retryTimeoutSeconds);
             _isPaused = false;
+            _lastTargetPacketTime = DateTime.MinValue;
         }
+
+        SetConnected(false);
+        SetState(MicState.Disconnected);
 
         RestartSocket();
         StartWatchdog();
@@ -82,6 +86,9 @@ public sealed class UdpListener : IDisposable
             StopWatchdog();
             CloseSocket();
         }
+
+        SetConnected(false);
+        SetState(MicState.Disconnected);
     }
 
     public void SetPaused(bool paused)
