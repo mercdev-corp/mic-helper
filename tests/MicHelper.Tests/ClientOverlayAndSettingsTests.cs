@@ -1156,6 +1156,69 @@ public sealed class ClientOverlayAndSettingsTests
         Assert.AreEqual(MicState.Muted, listener.LastReportedState);
     }
 
+    [TestMethod]
+    public void ClientTrayApplicationContext_ContextMenu_ContainsDonateBelowSettingsAndAheadOfExit()
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "ClientDonateTest_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            var settings = new ClientSettings { Mode = ClientMode.SinglePc, Port = 13990 };
+            var mockAudio = new MockAudioMonitor();
+            using var listener = new UdpListener(13990);
+            using var assetMgr = new OverlayAssetManager(tempFolder);
+            using var overlay = new OverlayForm(settings, assetMgr);
+            using var context = new ClientTrayApplicationContext(settings, listener, mockAudio, assetMgr, overlay);
+
+            var menu = context.ContextMenu;
+            Assert.IsNotNull(menu);
+
+            // Context menu structure:
+            // 0: Pause/Resume
+            // 1: Separator
+            // 2: Settings...
+            // 3: Donate
+            // 4: Separator
+            // 5: Exit
+            Assert.IsTrue(menu.Items.Count >= 6, $"Expected at least 6 menu items, found {menu.Items.Count}");
+
+            int settingsIndex = -1;
+            int donateIndex = -1;
+            int exitIndex = -1;
+
+            for (int i = 0; i < menu.Items.Count; i++)
+            {
+                var item = menu.Items[i];
+                if (item.Text != null && item.Text.StartsWith("Settings", StringComparison.OrdinalIgnoreCase))
+                {
+                    settingsIndex = i;
+                }
+                else if (string.Equals(item.Text, "Donate", StringComparison.OrdinalIgnoreCase))
+                {
+                    donateIndex = i;
+                }
+                else if (string.Equals(item.Text, "Exit", StringComparison.OrdinalIgnoreCase))
+                {
+                    exitIndex = i;
+                }
+            }
+
+            Assert.AreNotEqual(-1, settingsIndex, "Settings menu item not found");
+            Assert.AreNotEqual(-1, donateIndex, "Donate menu item not found");
+            Assert.AreNotEqual(-1, exitIndex, "Exit menu item not found");
+
+            Assert.AreEqual(settingsIndex + 1, donateIndex, "Donate must be positioned immediately below Settings...");
+            Assert.IsTrue(donateIndex < exitIndex, "Donate must be positioned ahead of Exit");
+            Assert.IsNotNull(context.MenuDonate);
+            Assert.AreEqual("Donate", context.MenuDonate.Text);
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
+    }
+
     private sealed class MockAudioMonitor : IAudioMonitor
     {
         public bool IsMonitoring { get; private set; }

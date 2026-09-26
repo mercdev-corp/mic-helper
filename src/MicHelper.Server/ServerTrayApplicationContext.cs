@@ -6,6 +6,7 @@ using MicHelper.Shared.Audio;
 using MicHelper.Shared.Network;
 using MicHelper.Shared.Protocol;
 using MicHelper.Shared.UI;
+using MicHelper.Shared.Common;
 
 namespace MicHelper.Server;
 
@@ -18,6 +19,7 @@ public sealed class ServerTrayApplicationContext : ApplicationContext
     private readonly NotifyIcon _trayIcon;
     private readonly ToolStripMenuItem _menuPauseResume;
     private readonly ToolStripMenuItem _menuSettings;
+    private readonly ToolStripMenuItem _menuDonate;
     private readonly ToolStripMenuItem _menuExit;
     private readonly ContextMenuStrip _contextMenu;
 
@@ -25,23 +27,32 @@ public sealed class ServerTrayApplicationContext : ApplicationContext
     private ServerSettingsForm? _settingsForm;
     private MicState _lastState = MicState.Unmuted;
 
-    public ServerTrayApplicationContext()
+    public ServerTrayApplicationContext() : this(null, null, null)
+    {
+    }
+
+    internal ServerTrayApplicationContext(
+        ServerSettings? settings,
+        IAudioMonitor? audioMonitor,
+        UdpBroadcaster? broadcaster)
     {
         _syncContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
-        _settings = ServerSettings.Load();
+        _settings = settings ?? ServerSettings.Load();
 
-        _broadcaster = new UdpBroadcaster(_settings.Port);
-        _audioMonitor = new WindowsAudioMonitor();
+        _broadcaster = broadcaster ?? new UdpBroadcaster(_settings.Port);
+        _audioMonitor = audioMonitor ?? new WindowsAudioMonitor();
 
         // Build Tray Menu
         _contextMenu = new ContextMenuStrip();
         _menuPauseResume = new ToolStripMenuItem("Pause", null, OnPauseResumeClicked);
         _menuSettings = new ToolStripMenuItem("Settings...", null, OnSettingsClicked);
+        _menuDonate = new ToolStripMenuItem("Donate", null, OnDonateClicked);
         _menuExit = new ToolStripMenuItem("Exit", null, OnExitClicked);
 
         _contextMenu.Items.Add(_menuPauseResume);
         _contextMenu.Items.Add(new ToolStripSeparator());
         _contextMenu.Items.Add(_menuSettings);
+        _contextMenu.Items.Add(_menuDonate);
         _contextMenu.Items.Add(new ToolStripSeparator());
         _contextMenu.Items.Add(_menuExit);
 
@@ -73,6 +84,9 @@ public sealed class ServerTrayApplicationContext : ApplicationContext
             UpdateAudioState();
         }
     }
+
+    internal ContextMenuStrip ContextMenu => _contextMenu;
+    internal ToolStripMenuItem MenuDonate => _menuDonate;
 
     private void PostToUiThread(Action action)
     {
@@ -215,19 +229,33 @@ public sealed class ServerTrayApplicationContext : ApplicationContext
         }
     }
 
+    private void OnDonateClicked(object? sender, EventArgs e)
+    {
+        DonateUrlProvider.OpenDonationPage();
+    }
+
     private void OnExitClicked(object? sender, EventArgs e)
     {
         ExitThread();
     }
 
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _trayIcon.Visible = false;
+            _trayIcon.Dispose();
+
+            _audioMonitor.Dispose();
+            _broadcaster.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
+
     protected override void ExitThreadCore()
     {
-        _trayIcon.Visible = false;
-        _trayIcon.Dispose();
-
-        _audioMonitor.Dispose();
-        _broadcaster.Dispose();
-
+        Dispose(true);
         base.ExitThreadCore();
     }
 }
