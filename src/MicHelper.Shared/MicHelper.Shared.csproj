@@ -14,6 +14,7 @@
     <EmbeddedResource Include="..\..\assets\server-disconnected.png" Link="Assets\server-disconnected.png" />
     <EmbeddedResource Include="..\..\assets\pause.png" Link="Assets\pause.png" />
     <EmbeddedResource Include="..\..\assets\app.ico" Link="Assets\app.ico" />
+    <EmbeddedResource Include="..\..\DONATE" Link="DONATE" />
   </ItemGroup>
 
 </Project>

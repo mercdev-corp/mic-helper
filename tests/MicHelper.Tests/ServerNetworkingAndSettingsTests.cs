@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using MicHelper.Server;
 using MicHelper.Server.Config;
 using MicHelper.Server.UI;
 using MicHelper.Shared.Audio;
@@ -356,6 +357,67 @@ public sealed class ServerNetworkingAndSettingsTests
         // Legacy IsDefault=true
         var legacyDev = new AudioDeviceInfo("l", "Legacy", IsDefault: true, IsDefaultConsole: false, IsDefaultCommunications: false);
         Assert.AreEqual(" (Default)", MicrophoneSelectionController.GetDeviceBadge(legacyDev));
+    }
+
+    [TestMethod]
+    public void ServerTrayApplicationContext_ContextMenu_ContainsDonateBelowSettingsAndAheadOfExit()
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "ServerDonateTest_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            var settings = new ServerSettings { Port = 13991, IsPaused = true };
+            var fakeAudio = new FakeAudioMonitor();
+            using var broadcaster = new UdpBroadcaster(13991);
+            using var context = new ServerTrayApplicationContext(settings, fakeAudio, broadcaster);
+
+            var menu = context.ContextMenu;
+            Assert.IsNotNull(menu);
+
+            // Context menu structure:
+            // 0: Pause/Resume
+            // 1: Separator
+            // 2: Settings...
+            // 3: Donate
+            // 4: Separator
+            // 5: Exit
+            Assert.IsTrue(menu.Items.Count >= 6, $"Expected at least 6 menu items, found {menu.Items.Count}");
+
+            int settingsIndex = -1;
+            int donateIndex = -1;
+            int exitIndex = -1;
+
+            for (int i = 0; i < menu.Items.Count; i++)
+            {
+                var item = menu.Items[i];
+                if (item.Text != null && item.Text.StartsWith("Settings", StringComparison.OrdinalIgnoreCase))
+                {
+                    settingsIndex = i;
+                }
+                else if (string.Equals(item.Text, "Donate", StringComparison.OrdinalIgnoreCase))
+                {
+                    donateIndex = i;
+                }
+                else if (string.Equals(item.Text, "Exit", StringComparison.OrdinalIgnoreCase))
+                {
+                    exitIndex = i;
+                }
+            }
+
+            Assert.AreNotEqual(-1, settingsIndex, "Settings menu item not found");
+            Assert.AreNotEqual(-1, donateIndex, "Donate menu item not found");
+            Assert.AreNotEqual(-1, exitIndex, "Exit menu item not found");
+
+            Assert.AreEqual(settingsIndex + 1, donateIndex, "Donate must be positioned immediately below Settings...");
+            Assert.IsTrue(donateIndex < exitIndex, "Donate must be positioned ahead of Exit");
+            Assert.IsNotNull(context.MenuDonate);
+            Assert.AreEqual("Donate", context.MenuDonate.Text);
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+        }
     }
 
     private sealed class FakeAudioMonitor : IAudioMonitor

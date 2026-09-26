@@ -7,6 +7,7 @@ using MicHelper.Shared.Audio;
 using MicHelper.Shared.Network;
 using MicHelper.Shared.Protocol;
 using MicHelper.Shared.UI;
+using MicHelper.Shared.Common;
 
 namespace MicHelper.Client;
 
@@ -21,6 +22,7 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
     private readonly NotifyIcon _trayIcon;
     private readonly ToolStripMenuItem _menuPauseResume;
     private readonly ToolStripMenuItem _menuSettings;
+    private readonly ToolStripMenuItem _menuDonate;
     private readonly ToolStripMenuItem _menuExit;
     private readonly ContextMenuStrip _contextMenu;
 
@@ -51,11 +53,13 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
         _contextMenu = new ContextMenuStrip();
         _menuPauseResume = new ToolStripMenuItem("Pause", null, OnPauseResumeClicked);
         _menuSettings = new ToolStripMenuItem("Settings...", null, OnSettingsClicked);
+        _menuDonate = new ToolStripMenuItem("Donate", null, OnDonateClicked);
         _menuExit = new ToolStripMenuItem("Exit", null, OnExitClicked);
 
         _contextMenu.Items.Add(_menuPauseResume);
         _contextMenu.Items.Add(new ToolStripSeparator());
         _contextMenu.Items.Add(_menuSettings);
+        _contextMenu.Items.Add(_menuDonate);
         _contextMenu.Items.Add(new ToolStripSeparator());
         _contextMenu.Items.Add(_menuExit);
 
@@ -105,6 +109,8 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
     internal IAudioMonitor AudioMonitor => _audioMonitor;
     internal OverlayForm OverlayForm => _overlayForm;
     internal NotifyIcon TrayIcon => _trayIcon;
+    internal ContextMenuStrip ContextMenu => _contextMenu;
+    internal ToolStripMenuItem MenuDonate => _menuDonate;
 
     private void PostToUiThread(Action action)
     {
@@ -356,6 +362,11 @@ public sealed class ClientTrayApplicationContext : ApplicationContext
             _settingsForm.BringToFront();
             _settingsForm.Activate();
         }
+    }
+
+    private void OnDonateClicked(object? sender, EventArgs e)
+    {
+        DonateUrlProvider.OpenDonationPage();
     }
 
     private void OnExitClicked(object? sender, EventArgs e)
